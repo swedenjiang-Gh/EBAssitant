@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net462</TargetFramework>
+    <PlatformTarget>x86</PlatformTarget>
+    <AssemblyName>EBAssist.Adapter2025</AssemblyName>
+    <OutputPath>..\..\bin\Debug\net9.0-windows\Adapters\2025\</OutputPath>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+</Project>

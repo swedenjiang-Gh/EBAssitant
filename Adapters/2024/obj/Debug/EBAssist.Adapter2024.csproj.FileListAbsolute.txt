@@ -1,0 +1,8 @@
+D:\开发\代码仓\EB\EBAssist\Adapters\2024\obj\Debug\EBAssist.Adapter2024.csproj.AssemblyReference.cache
+D:\开发\代码仓\EB\EBAssist\Adapters\2024\obj\Debug\Interop.Aucotec.dll
+D:\开发\代码仓\EB\EBAssist\Adapters\2024\obj\Debug\EBAssist.Adapter2024.csproj.ResolveComReference.cache
+D:\开发\代码仓\EB\EBAssist\Adapters\2024\obj\Debug\EBAssist.Adapter2024.csproj.CoreCompileInputs.cache
+D:\开发\代码仓\EB\EBAssist\bin\Debug\net9.0-windows\Adapters\2024\EBAssist.Adapter2024.exe
+D:\开发\代码仓\EB\EBAssist\bin\Debug\net9.0-windows\Adapters\2024\EBAssist.Adapter2024.pdb
+D:\开发\代码仓\EB\EBAssist\Adapters\2024\obj\Debug\EBAssist.Adapter2024.exe
+D:\开发\代码仓\EB\EBAssist\Adapters\2024\obj\Debug\EBAssist.Adapter2024.pdb

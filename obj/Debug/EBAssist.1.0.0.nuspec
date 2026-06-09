@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>EBAssist</id>
+    <version>1.0.0</version>
+    <authors>EBAssist</authors>
+    <description>Package Description</description>
+    <repository type="git" commit="5a7d68b2e021303fffdeb03e7ed0c27d4c2c8c6a" />
+    <dependencies>
+      <group targetFramework="net9.0-windows7.0">
+        <dependency id="ExcelDataReader" version="3.7.0" exclude="Build,Analyzers" />
+        <dependency id="System.Text.Encoding.CodePages" version="9.0.0" exclude="Build,Analyzers" />
+      </group>
+    </dependencies>
+    <frameworkReferences>
+      <group targetFramework="net9.0-windows7.0">
+        <frameworkReference name="Microsoft.WindowsDesktop.App.WindowsForms" />
+      </group>
+    </frameworkReferences>
+  </metadata>
+  <files>
+    <file src="D:\开发\代码仓\EB\EBAssist\bin\Debug\net9.0-windows\EBAssist.runtimeconfig.json" target="lib\net9.0-windows7.0\EBAssist.runtimeconfig.json" />
+    <file src="D:\开发\代码仓\EB\EBAssist\bin\Debug\net9.0-windows\EBAssist.dll" target="lib\net9.0-windows7.0\EBAssist.dll" />
+  </files>
+</package>
