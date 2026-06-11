@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace EBAssist;
+namespace EBAssistant;
 
 public sealed class TypeDefinitionResultForm : Form
 {

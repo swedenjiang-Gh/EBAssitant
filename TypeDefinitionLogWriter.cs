@@ -1,12 +1,12 @@
 using System.Text.Json;
 
-namespace EBAssist;
+namespace EBAssistant;
 
 public static class TypeDefinitionLogWriter
 {
     public static string Write(ApplyTypeDefinitionDialogsResult result)
     {
-        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EBAssist", "Logs", "TypeDefinitions");
+        var dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EBAssistant", "Logs", "TypeDefinitions");
         Directory.CreateDirectory(dir);
         var stem = $"type-definition-{DateTime.Now:yyyyMMdd-HHmmss}";
         File.WriteAllText(Path.Combine(dir, stem + ".json"), JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));

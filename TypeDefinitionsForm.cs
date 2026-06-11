@@ -1,4 +1,6 @@
-namespace EBAssist;
+using System.Text.Json;
+
+namespace EBAssistant;
 
 public sealed class TypeDefinitionsForm : Form
 {

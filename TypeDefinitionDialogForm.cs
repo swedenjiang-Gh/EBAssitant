@@ -1,4 +1,4 @@
-namespace EBAssist;
+namespace EBAssistant;
 
 public sealed class TypeDefinitionDialogForm : Form
 {

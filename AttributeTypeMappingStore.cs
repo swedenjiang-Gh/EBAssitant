@@ -1,12 +1,12 @@
 using System.Text.Json;
 
-namespace EBAssist;
+namespace EBAssistant;
 
 public static class AttributeTypeMappingStore
 {
     private static readonly string ConfigPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "EBAssist",
+        "EBAssistant",
         "attribute-type-mappings.json");
 
     public static List<AttributeTypeMapping> Load()
