@@ -1,11 +1,24 @@
 {
   "version": 2,
-  "dgSpecHash": "2kK9gxc8rGw=",
+  "dgSpecHash": "mfBAGFZ+jwE=",
   "success": true,
-  "projectFilePath": "D:\\开发\\代码仓\\EB\\EBAssist\\EBAssist.csproj",
+  "projectFilePath": "D:\\开发\\代码仓\\EB\\EBAssistant\\EBAssistant.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\j\\.nuget\\packages\\exceldatareader\\3.7.0\\exceldatareader.3.7.0.nupkg.sha512",
     "C:\\Users\\j\\.nuget\\packages\\system.text.encoding.codepages\\9.0.0\\system.text.encoding.codepages.9.0.0.nupkg.sha512"
   ],
-  "logs": []
+  "logs": [
+    {
+      "code": "NU1510",
+      "level": "Warning",
+      "message": "PackageReference System.Text.Encoding.CodePages 将不会删除。请考虑从依赖项中移除此包，因为可能不需要它。",
+      "projectPath": "D:\\开发\\代码仓\\EB\\EBAssistant\\EBAssistant.csproj",
+      "warningLevel": 1,
+      "filePath": "D:\\开发\\代码仓\\EB\\EBAssistant\\EBAssistant.csproj",
+      "libraryId": "System.Text.Encoding.CodePages",
+      "targetGraphs": [
+        "net10.0-windows7.0"
+      ]
+    }
+  ]
 }

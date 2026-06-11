@@ -12,7 +12,7 @@ using System.Text;
 using Aucotec;
 using EbApplication = Aucotec.Application;
 
-namespace EBAssist.Adapter
+namespace EBAssistant.Adapter
 {
     internal static class AdapterProgram
     {
@@ -195,7 +195,7 @@ namespace EBAssist.Adapter
                 ParseType(item.Type);
             }
 
-            var preflightName = "EBAssist_MoveCheck_" + DateTime.Now.ToString("yyyyMMddHHmmssfff");
+            var preflightName = "EBAssistant_MoveCheck_" + DateTime.Now.ToString("yyyyMMddHHmmssfff");
             ObjectItem preflight = null;
             try
             {

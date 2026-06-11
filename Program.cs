@@ -1,4 +1,4 @@
-namespace EBAssist;
+namespace EBAssistant;
 
 internal static class Program
 {
