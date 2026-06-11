@@ -1,8 +1,0 @@
-D:\开发\代码仓\EB\EBAssist\Adapters\2023\obj\Debug\EBAssist.Adapter2023.csproj.AssemblyReference.cache
-D:\开发\代码仓\EB\EBAssist\Adapters\2023\obj\Debug\Interop.Aucotec.dll
-D:\开发\代码仓\EB\EBAssist\Adapters\2023\obj\Debug\EBAssist.Adapter2023.csproj.ResolveComReference.cache
-D:\开发\代码仓\EB\EBAssist\Adapters\2023\obj\Debug\EBAssist.Adapter2023.csproj.CoreCompileInputs.cache
-D:\开发\代码仓\EB\EBAssist\bin\Debug\net9.0-windows\Adapters\2023\EBAssist.Adapter2023.exe
-D:\开发\代码仓\EB\EBAssist\bin\Debug\net9.0-windows\Adapters\2023\EBAssist.Adapter2023.pdb
-D:\开发\代码仓\EB\EBAssist\Adapters\2023\obj\Debug\EBAssist.Adapter2023.exe
-D:\开发\代码仓\EB\EBAssist\Adapters\2023\obj\Debug\EBAssist.Adapter2023.pdb

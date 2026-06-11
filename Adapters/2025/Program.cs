@@ -1,7 +1,7 @@
 using System;
 using System.Text;
 
-namespace EBAssist.Adapter2025
+namespace EBAssistant.Adapter2025
 {
     internal static class Program
     {

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 
-namespace EBAssist;
+namespace EBAssistant;
 
 public sealed class EbAdapterClient
 {
@@ -27,7 +27,7 @@ public sealed class EbAdapterClient
         var result = new List<EbAdapterClient>();
         foreach (var version in new[] { "2023", "2024", "2025" })
         {
-            var path = Path.Combine(AppContext.BaseDirectory, "Adapters", version, $"EBAssist.Adapter{version}.exe");
+            var path = Path.Combine(AppContext.BaseDirectory, "Adapters", version, $"EBAssistant.Adapter{version}.exe");
             if (!File.Exists(path))
             {
                 continue;

@@ -1,6 +1,6 @@
 using ExcelDataReader;
 
-namespace EBAssist;
+namespace EBAssistant;
 
 public static class ExcelAttributeImporter
 {

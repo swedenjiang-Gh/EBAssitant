@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace EBAssist;
+namespace EBAssistant;
 
 public sealed class AdapterResponse<T>
 {

@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace EBAssist;
+namespace EBAssistant;
 
 public static class TypeDefinitionCache
 {
@@ -29,7 +29,7 @@ public static class TypeDefinitionCache
     private static string GetPath(TypeDefinitionIdentity identity)
     {
         var safeId = string.Concat(identity.RootId.Where(char.IsLetterOrDigit));
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EBAssist", "Cache", "TypeDefinitions", $"{identity.Version}_{safeId}.json");
+        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "EBAssistant", "Cache", "TypeDefinitions", $"{identity.Version}_{safeId}.json");
     }
 
     private sealed class CacheEnvelope
