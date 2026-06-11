@@ -7,7 +7,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = "EB Assist";
+        Text = "EB Assistant";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(720, 480);
         Size = new Size(900, 560);
@@ -17,7 +17,7 @@ public sealed class MainForm : Form
         var titleLabel = new Label
         {
             AutoSize = true,
-            Text = "EB Assist",
+            Text = "EB Assistant",
             Font = new Font("Microsoft YaHei UI", 24F, FontStyle.Bold),
             ForeColor = Color.FromArgb(32, 43, 59),
             Margin = new Padding(0, 0, 0, 6)
