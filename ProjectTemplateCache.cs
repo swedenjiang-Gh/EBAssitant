@@ -54,7 +54,7 @@ public static class ProjectTemplateCache
 
     private static string GetPath(ProjectTemplateIdentity identity, string rootDirectory)
     {
-        var safeId = string.Concat(identity.RootId.Where(char.IsLetterOrDigit));
+        var safeId = Uri.EscapeDataString(identity.RootId);
         return Path.Combine(rootDirectory, $"{identity.Version}_{safeId}.json");
     }
 

@@ -6,6 +6,7 @@ internal static class ProjectTemplateCacheTests
     {
         SeparatesCacheByVersionAndRootId();
         ReturnsNullWhenProtocolVersionDoesNotMatch();
+        DoesNotCollapseDifferentRootIdsWhenSanitizingFileName();
     }
 
     private static void SeparatesCacheByVersionAndRootId()
@@ -55,6 +56,18 @@ internal static class ProjectTemplateCacheTests
             """);
 
         Assert.Null(ProjectTemplateCache.Load(identity, root));
+    }
+
+    private static void DoesNotCollapseDifferentRootIdsWhenSanitizingFileName()
+    {
+        var root = NewRootDirectory();
+        var dashed = new ProjectTemplateIdentity { Version = "2023", RootId = "A-B", RootName = "Root" };
+        var plain = new ProjectTemplateIdentity { Version = "2023", RootId = "AB", RootName = "Root" };
+
+        ProjectTemplateCache.Save(new ProjectTemplateTreeResult { Identity = dashed }, root);
+
+        Assert.NotNull(ProjectTemplateCache.Load(dashed, root));
+        Assert.Null(ProjectTemplateCache.Load(plain, root));
     }
 
     private static string NewRootDirectory()

@@ -24,6 +24,13 @@ public sealed class AttributeFolderNode
     public List<AttributeFolderNode> Children { get; set; } = [];
 }
 
+public sealed class AttributeFolderIdentity
+{
+    public string Version { get; set; } = "";
+    public string RootId { get; set; } = "";
+    public string RootName { get; set; } = "";
+}
+
 public sealed class ExistingAttribute
 {
     public string Name { get; set; } = "";
@@ -51,10 +58,23 @@ public sealed class CreateAttributeItem
 
 public sealed class CreateAttributesResult
 {
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+    public string TargetFolder { get; set; } = "";
     public int CreatedCount { get; set; }
     public bool RolledBack { get; set; }
     public List<string> CreatedNames { get; set; } = [];
     public List<string> RollbackErrors { get; set; } = [];
+    public List<CreateAttributeOperationRecord> Records { get; set; } = [];
+}
+
+public sealed class CreateAttributeOperationRecord
+{
+    public int RowNumber { get; set; }
+    public string Name { get; set; } = "";
+    public string Type { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
 }
 
 public sealed class CreateFolderRequest

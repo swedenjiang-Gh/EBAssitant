@@ -738,16 +738,6 @@ namespace EBAssistant.Adapter
             catch { return false; }
         }
 
-        private static ObjectItem FindDirectChildByName(IEnumerable children, string name)
-        {
-            foreach (object raw in children)
-            {
-                var child = raw as ObjectItem;
-                if (child != null && string.Equals(child.Name, name, StringComparison.OrdinalIgnoreCase)) return child;
-            }
-            return null;
-        }
-
         private static bool IsFolderKind(AucObjectKind kind)
         {
             var name = kind.ToString();
