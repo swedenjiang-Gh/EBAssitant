@@ -36,12 +36,17 @@ namespace EBAssistant.Adapter
                 var app = GetActiveApplication();
                 if (app == null) return Write(Fail<object>("未检测到活动的 EB " + Version + "。"));
                 if (operation == "GetAttributeFolderTree") return Write(GetAttributeFolderTree(app));
+                if (operation == "GetAttributeFolderIdentity") return Write(GetAttributeFolderIdentity(app));
                 if (operation == "CreateAttributes") return Write(CreateAttributes(app, Read<CreateAttributesRequest>()));
                 if (operation == "CreateAttributeFolder") return Write(CreateAttributeFolder(app, Read<CreateFolderRequest>()));
                 if (operation == "DeleteEmptyAttributeFolder") return Write(DeleteEmptyAttributeFolder(app, Read<DeleteFolderRequest>()));
                 if (operation == "GetTypeDefinitionIdentity") return Write(GetTypeDefinitionIdentity(app));
                 if (operation == "GetTypeDefinitionTree") return Write(GetTypeDefinitionTree(app));
                 if (operation == "ValidateAttributeIds") return Write(ValidateAttributeIds(app, Read<ValidateAttributeIdsRequest>()));
+                if (operation == "GetProjectTemplateIdentity") return Write(GetProjectTemplateIdentity(app));
+                if (operation == "GetProjectTemplateTree") return Write(GetProjectTemplateTree(app));
+                if (operation == "ValidateWorksheetAttributeIds") return Write(ValidateWorksheetAttributeIds(app, Read<ValidateWorksheetAttributeIdsRequest>()));
+                if (operation == "GetWorksheetCreationContext") return Write(GetWorksheetCreationContext(app, Read<WorksheetCreationContextRequest>()));
                 if (operation == "ApplyTypeDefinitionDialogs") return Write(ApplyTypeDefinitionDialogs(app, Read<ApplyTypeDefinitionDialogsRequest>()));
                 return Write(Fail<object>("未知操作：" + operation));
             }
@@ -144,6 +149,12 @@ namespace EBAssistant.Adapter
             return Ok(result, "属性目录读取成功。");
         }
 
+        private static AdapterResponse<AttributeFolderIdentity> GetAttributeFolderIdentity(EbApplication app)
+        {
+            var root = app.Folders.Attributes;
+            return Ok(new AttributeFolderIdentity { Version = Version, RootId = root.ID, RootName = root.Name }, "属性目录身份读取成功。");
+        }
+
         private static AttributeFolderNode ReadFolder(ObjectItem folder, string parentPath)
         {
             var path = string.IsNullOrWhiteSpace(parentPath) ? folder.Name : parentPath + " / " + folder.Name;
@@ -217,13 +228,27 @@ namespace EBAssistant.Adapter
                 }
             }
 
-            var created = new List<ObjectItem>();
-            var result = new CreateAttributesResult();
+            var created = new List<CreatedAttribute>();
+            var result = new CreateAttributesResult { Status = "创建中", TargetFolder = target.Name };
+            var currentIndex = 0;
             try
             {
-                foreach (var item in request.Attributes)
+                for (var index = 0; index < request.Attributes.Count; index++)
                 {
+                    currentIndex = index;
+                    var item = request.Attributes[index];
                     var obj = root.NewAttribute(item.Name.Trim(), ParseType(item.Type), item.Digits);
+                    var record = new CreateAttributeOperationRecord
+                    {
+                        RowNumber = item.RowNumber,
+                        Name = item.Name.Trim(),
+                        Type = item.Type,
+                        Status = "创建失败",
+                        Message = "属性创建尚未完成。"
+                    };
+                    var createdItem = new CreatedAttribute { Object = obj, Record = record };
+                    created.Add(createdItem);
+                    result.Records.Add(record);
                     obj.Store();
                     root.Store();
                     if (!obj.MoveTo(target)) throw new InvalidOperationException("无法将属性移动到目录：" + item.Name);
@@ -231,25 +256,81 @@ namespace EBAssistant.Adapter
                     target.Store();
                     if (obj.Parent == null || !string.Equals(obj.Parent.ID, target.ID, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidOperationException("属性创建后目录读回不一致：" + item.Name);
-                    created.Add(obj);
+                    record.Status = "创建成功";
+                    record.Message = "属性已创建并移动到目标目录。";
+                    createdItem.Completed = true;
                     result.CreatedNames.Add(item.Name.Trim());
                 }
                 result.CreatedCount = created.Count;
+                result.Status = "完成";
+                result.Message = "批量创建成功。";
                 return Ok(result, "批量创建成功。");
             }
             catch (Exception ex)
             {
                 result.RolledBack = true;
-                foreach (var obj in created.AsEnumerable().Reverse())
+                var error = Describe(ex);
+                if (result.Records.Count <= currentIndex)
                 {
-                    try { obj.Delete(false, AucDeleteType.aucDeleteTStandard); }
-                    catch (Exception rollbackEx) { result.RollbackErrors.Add(obj.Name + "：" + Describe(rollbackEx)); }
+                    var failed = request.Attributes[currentIndex];
+                    result.Records.Add(new CreateAttributeOperationRecord
+                    {
+                        RowNumber = failed.RowNumber,
+                        Name = failed.Name.Trim(),
+                        Type = failed.Type,
+                        Status = "创建失败",
+                        Message = error
+                    });
+                }
+                else
+                {
+                    created.Last().Record.Status = "创建失败";
+                    created.Last().Record.Message = error;
+                }
+                foreach (var pending in request.Attributes.Skip(currentIndex + 1))
+                {
+                    result.Records.Add(new CreateAttributeOperationRecord
+                    {
+                        RowNumber = pending.RowNumber,
+                        Name = pending.Name.Trim(),
+                        Type = pending.Type,
+                        Status = "未处理",
+                        Message = "前序属性创建失败，已停止后续操作。"
+                    });
+                }
+
+                foreach (var createdItem in created.AsEnumerable().Reverse())
+                {
+                    try
+                    {
+                        createdItem.Object.Delete(false, AucDeleteType.aucDeleteTStandard);
+                        if (createdItem.Completed)
+                        {
+                            createdItem.Record.Status = "已回滚";
+                            createdItem.Record.Message = "创建成功后因本批后续失败，已删除回滚。";
+                        }
+                        else
+                        {
+                            createdItem.Record.Message = error + "；已清理未完成的属性对象。";
+                        }
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        var rollbackError = createdItem.Record.Name + "：" + Describe(rollbackEx);
+                        result.RollbackErrors.Add(rollbackError);
+                        createdItem.Record.Status = "回滚失败";
+                        createdItem.Record.Message = rollbackError;
+                    }
                 }
                 try { target.Store(); root.Store(); } catch { }
+                result.CreatedNames = result.Records.Where(x => x.Status == "回滚失败").Select(x => x.Name).ToList();
+                result.CreatedCount = result.CreatedNames.Count;
+                result.Status = result.RollbackErrors.Count == 0 ? "失败，已回滚" : "失败，部分回滚失败";
+                result.Message = "批量创建失败，已尝试回滚本批属性。" + error;
                 return new AdapterResponse<CreateAttributesResult>
                 {
                     Success = false,
-                    Message = "批量创建失败，已尝试回滚本批属性。" + Describe(ex) +
+                    Message = result.Message +
                               (result.RollbackErrors.Count == 0 ? "" : " 回滚错误：" + string.Join("；", result.RollbackErrors)),
                     Data = result
                 };
@@ -341,6 +422,53 @@ namespace EBAssistant.Adapter
                 if (child != null) result.Nodes.Add(ReadTypeDefinitionObject(app, child, root.Name, child as TypeDefinition));
             }
             return Ok(result, "类型定义树读取成功。");
+        }
+
+        private static AdapterResponse<ProjectTemplateIdentity> GetProjectTemplateIdentity(EbApplication app)
+        {
+            var root = app.Folders.ProjectTemplates;
+            return Ok(new ProjectTemplateIdentity { Version = Version, RootId = root.ID, RootName = root.Name }, "项目模板身份读取成功。");
+        }
+
+        private static AdapterResponse<ProjectTemplateTreeResult> GetProjectTemplateTree(EbApplication app)
+        {
+            var root = app.Folders.ProjectTemplates;
+            var result = new ProjectTemplateTreeResult
+            {
+                Identity = new ProjectTemplateIdentity { Version = Version, RootId = root.ID, RootName = root.Name }
+            };
+            foreach (object raw in root.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child == null) continue;
+                var node = ReadProjectTemplateNode(child, root.Name);
+                if (node != null) result.Nodes.Add(node);
+            }
+            return Ok(result, "项目模板树读取成功。");
+        }
+
+        private static ProjectTemplateNode ReadProjectTemplateNode(ObjectItem item, string parentPath)
+        {
+            var path = parentPath + " / " + item.Name;
+            var node = new ProjectTemplateNode
+            {
+                Id = item.ID,
+                Name = item.Name,
+                FullPath = path,
+                IsTemplateProject = item.Kind == AucObjectKind.aucObjProject
+            };
+            if (node.IsTemplateProject) return node;
+
+            var hasChildren = false;
+            foreach (object raw in item.Children as IEnumerable)
+            {
+                hasChildren = true;
+                var child = raw as ObjectItem;
+                if (child == null) continue;
+                var childNode = ReadProjectTemplateNode(child, path);
+                if (childNode != null) node.Children.Add(childNode);
+            }
+            return hasChildren ? node : null;
         }
 
         private static TypeDefinitionNode ReadTypeDefinitionObject(EbApplication app, ObjectItem item, string parentPath, TypeDefinition definition)
@@ -445,6 +573,76 @@ namespace EBAssistant.Adapter
             }, "属性 ID 校验完成。");
         }
 
+        private static AdapterResponse<ValidateWorksheetAttributeIdsResult> ValidateWorksheetAttributeIds(EbApplication app, ValidateWorksheetAttributeIdsRequest request)
+        {
+            var requested = new HashSet<int>((request == null || request.AttributeIds == null) ? new List<int>() : request.AttributeIds);
+            var existing = new HashSet<int>();
+            CollectAttributeDefinitionIds(app.Folders.Attributes.Children, requested, existing);
+            foreach (var aid in requested.Except(existing).ToList())
+            {
+                try
+                {
+                    IAucVbaInternUtils utils = (IAucVbaInternUtils)app;
+                    Array aids = new AucAttribute[] { (AucAttribute)aid };
+                    Array descriptions;
+                    utils.GetAttributeDescription(ref aids, out descriptions);
+                    if (descriptions == null || descriptions.Length == 0) continue;
+                    foreach (object raw in descriptions)
+                    {
+                        var description = (AucAttributeDescription)raw;
+                        if (!string.IsNullOrWhiteSpace(description.sbName))
+                        {
+                            existing.Add(aid);
+                            break;
+                        }
+                    }
+                }
+                catch { }
+            }
+            return Ok(new ValidateWorksheetAttributeIdsResult
+            {
+                ExistingIds = existing.OrderBy(x => x).ToList(),
+                MissingIds = requested.Except(existing).OrderBy(x => x).ToList()
+            }, "工作表属性 ID 校验完成。");
+        }
+
+        private static AdapterResponse<WorksheetCreationContextResult> GetWorksheetCreationContext(EbApplication app, WorksheetCreationContextRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.TemplateProjectId))
+                return Fail<WorksheetCreationContextResult>("模板项目 ID 不能为空。");
+
+            var template = app.Utils.GetSnglObjectByID(request.TemplateProjectId) as ObjectItem;
+            if (template == null || template.Kind != AucObjectKind.aucObjProject)
+                return Fail<WorksheetCreationContextResult>("无法解析模板项目。");
+
+            var worksheetsFolder = FindDirectChildByName(template.Children as IEnumerable, "工作表");
+            if (worksheetsFolder == null)
+                return Fail<WorksheetCreationContextResult>("模板项目下未找到 /工作表。");
+
+            var favorites = FindDirectChildrenByName(worksheetsFolder.Children as IEnumerable, "收藏");
+            if (favorites.Count != 1)
+                return Fail<WorksheetCreationContextResult>("模板项目下未找到唯一的 /工作表/收藏。");
+
+            var favorite = favorites[0];
+            var templatePath = FindProjectTemplatePath(app.Folders.ProjectTemplates.Children, template.ID, app.Folders.ProjectTemplates.Name);
+            if (string.IsNullOrWhiteSpace(templatePath)) templatePath = app.Folders.ProjectTemplates.Name + " / " + template.Name;
+            var targetPath = templatePath + " / " + worksheetsFolder.Name + " / " + favorite.Name;
+            var result = new WorksheetCreationContextResult
+            {
+                TemplateProjectPath = templatePath,
+                TargetFolderPath = targetPath
+            };
+            foreach (object raw in favorite.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && child.Kind == AucObjectKind.aucObjSheet)
+                {
+                    result.ExistingWorksheetNames.Add(child.Name);
+                }
+            }
+            return Ok(result, "工作表创建上下文读取成功。");
+        }
+
         private static void CollectAttributeDefinitionIds(IEnumerable children, HashSet<int> requested, HashSet<int> existing)
         {
             foreach (object raw in children)
@@ -486,7 +684,6 @@ namespace EBAssistant.Adapter
                     try
                     {
                         item.Attributes.Add((AucAttribute)definition.AttributeId, Type.Missing, definition.TabName);
-                        item.Store();
                         var readback = app.Utils.GetSnglObjectByID(item.ID) as TypeItem;
                         if (readback == null || !ContainsAttribute(readback.Attributes, definition.AttributeId, null))
                             throw new InvalidOperationException("添加后无法读回属性。");
@@ -494,6 +691,12 @@ namespace EBAssistant.Adapter
                     }
                     catch (Exception ex)
                     {
+                        var readback = ResolveTypeItem(app, item.ID);
+                        if (ContainsAttributeSafe(readback, definition.AttributeId))
+                        {
+                            result.Records.Add(Record(item, definition, "added", "属性已添加并读回确认；添加后的附加检查曾返回：" + Describe(ex)));
+                            continue;
+                        }
                         result.Status = "failed";
                         result.Records.Add(Record(item, definition, "failed", Describe(ex)));
                         result.UnprocessedOperations.AddRange(request.Definitions.Skip(definitionIndex + 1)
@@ -526,6 +729,48 @@ namespace EBAssistant.Adapter
                     return true;
             }
             return false;
+        }
+
+        private static bool ContainsAttributeSafe(TypeItem item, int aid)
+        {
+            try { return item != null && ContainsAttribute(item.Attributes, aid, null); }
+            catch { return false; }
+        }
+
+        private static ObjectItem FindDirectChildByName(IEnumerable children, string name)
+        {
+            foreach (object raw in children)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && string.Equals(child.Name, name, StringComparison.OrdinalIgnoreCase)) return child;
+            }
+            return null;
+        }
+
+        private static List<ObjectItem> FindDirectChildrenByName(IEnumerable children, string name)
+        {
+            var result = new List<ObjectItem>();
+            foreach (object raw in children)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && string.Equals(child.Name, name, StringComparison.OrdinalIgnoreCase)) result.Add(child);
+            }
+            return result;
+        }
+
+        private static string FindProjectTemplatePath(IEnumerable children, string id, string parentPath)
+        {
+            foreach (object raw in children)
+            {
+                var child = raw as ObjectItem;
+                if (child == null) continue;
+                var path = parentPath + " / " + child.Name;
+                if (string.Equals(child.ID, id, StringComparison.OrdinalIgnoreCase)) return path;
+                if (child.Kind == AucObjectKind.aucObjProject) continue;
+                var nested = FindProjectTemplatePath(child.Children as IEnumerable, id, path);
+                if (!string.IsNullOrWhiteSpace(nested)) return nested;
+            }
+            return null;
         }
 
         private static ObjectItem FindFolder(IEnumerable children, string id)
@@ -589,18 +834,28 @@ namespace EBAssistant.Adapter
     [DataContract] internal sealed class ConnectionInfo { [DataMember] public string Version; [DataMember] public string ApplicationName; [DataMember] public bool IsActive; }
     [DataContract] internal sealed class AttributeFolderNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public List<AttributeFolderNode> Children = new List<AttributeFolderNode>(); }
     [DataContract] internal sealed class ExistingAttribute { [DataMember] public string Name; }
+    [DataContract] internal sealed class AttributeFolderIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; }
     [DataContract] internal sealed class FolderTreeResult { [DataMember] public List<AttributeFolderNode> Folders = new List<AttributeFolderNode>(); [DataMember] public List<ExistingAttribute> ExistingAttributes = new List<ExistingAttribute>(); }
     [DataContract] internal sealed class CreateAttributesRequest { [DataMember] public string TargetFolderId; [DataMember] public List<CreateAttributeItem> Attributes; }
     [DataContract] internal sealed class CreateAttributeItem { [DataMember] public int RowNumber; [DataMember] public string Name; [DataMember] public string Type; [DataMember] public int Digits; }
-    [DataContract] internal sealed class CreateAttributesResult { [DataMember] public int CreatedCount; [DataMember] public bool RolledBack; [DataMember] public List<string> CreatedNames = new List<string>(); [DataMember] public List<string> RollbackErrors = new List<string>(); }
+    internal sealed class CreatedAttribute { public ObjectItem Object; public CreateAttributeOperationRecord Record; public bool Completed; }
+    [DataContract] internal sealed class CreateAttributeOperationRecord { [DataMember] public int RowNumber; [DataMember] public string Name; [DataMember] public string Type; [DataMember] public string Status; [DataMember] public string Message; }
+    [DataContract] internal sealed class CreateAttributesResult { [DataMember] public string Status; [DataMember] public string Message; [DataMember] public string TargetFolder; [DataMember] public int CreatedCount; [DataMember] public bool RolledBack; [DataMember] public List<string> CreatedNames = new List<string>(); [DataMember] public List<string> RollbackErrors = new List<string>(); [DataMember] public List<CreateAttributeOperationRecord> Records = new List<CreateAttributeOperationRecord>(); }
     [DataContract] internal sealed class CreateFolderRequest { [DataMember] public string ParentFolderId; [DataMember] public string Name; }
     [DataContract] internal sealed class CreateFolderResult { [DataMember] public string Id; [DataMember] public string Name; }
     [DataContract] internal sealed class DeleteFolderRequest { [DataMember] public string Id; }
     [DataContract] internal sealed class TypeDefinitionIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; }
     [DataContract] internal sealed class TypeDefinitionNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public string NodeType; [DataMember] public bool IsActionable; [DataMember] public List<TypeDefinitionNode> Children = new List<TypeDefinitionNode>(); }
     [DataContract] internal sealed class TypeDefinitionTreeResult { [DataMember] public TypeDefinitionIdentity Identity; [DataMember] public List<TypeDefinitionNode> Nodes = new List<TypeDefinitionNode>(); }
+    [DataContract] internal sealed class ProjectTemplateIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; }
+    [DataContract] internal sealed class ProjectTemplateNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public bool IsTemplateProject; [DataMember] public List<ProjectTemplateNode> Children = new List<ProjectTemplateNode>(); }
+    [DataContract] internal sealed class ProjectTemplateTreeResult { [DataMember] public ProjectTemplateIdentity Identity; [DataMember] public List<ProjectTemplateNode> Nodes = new List<ProjectTemplateNode>(); }
     [DataContract] internal sealed class ValidateAttributeIdsRequest { [DataMember] public List<int> AttributeIds; }
     [DataContract] internal sealed class ValidateAttributeIdsResult { [DataMember] public List<int> ExistingIds; [DataMember] public List<int> MissingIds; }
+    [DataContract] internal sealed class ValidateWorksheetAttributeIdsRequest { [DataMember] public List<int> AttributeIds = new List<int>(); }
+    [DataContract] internal sealed class ValidateWorksheetAttributeIdsResult { [DataMember] public List<int> ExistingIds = new List<int>(); [DataMember] public List<int> MissingIds = new List<int>(); }
+    [DataContract] internal sealed class WorksheetCreationContextRequest { [DataMember] public string TemplateProjectId; }
+    [DataContract] internal sealed class WorksheetCreationContextResult { [DataMember] public string TemplateProjectPath; [DataMember] public string TargetFolderPath; [DataMember] public List<string> ExistingWorksheetNames = new List<string>(); }
     [DataContract] internal sealed class DialogDefinitionItem { [DataMember] public string TabName; [DataMember] public int AttributeId; }
     [DataContract] internal sealed class ApplyTypeDefinitionDialogsRequest { [DataMember] public List<string> TypeItemIds; [DataMember] public List<DialogDefinitionItem> Definitions; }
     [DataContract] internal sealed class TypeDefinitionOperationRecord { [DataMember] public string TypeItemId; [DataMember] public string TypeItemName; [DataMember] public int AttributeId; [DataMember] public string TabName; [DataMember] public string Status; [DataMember] public string Message; }

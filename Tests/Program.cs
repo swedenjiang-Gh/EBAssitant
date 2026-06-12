@@ -9,7 +9,8 @@ internal static class Program
             WorksheetNameResolverTests.Run();
             WorksheetColumnWidthCalculatorTests.Run();
             WorksheetImportBuilderTests.Run();
-            Console.WriteLine("PASS: 3 test groups");
+            ProjectTemplateCacheTests.Run();
+            Console.WriteLine("PASS: 4 test groups");
             return 0;
         }
         catch (Exception exception)

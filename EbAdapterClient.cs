@@ -12,6 +12,8 @@ public sealed class EbAdapterClient
 
     private readonly string _adapterPath;
 
+    public static string LastDiscoveryMessage { get; private set; } = string.Empty;
+
     private EbAdapterClient(string adapterPath, ConnectionInfo connection)
     {
         _adapterPath = adapterPath;
@@ -25,11 +27,13 @@ public sealed class EbAdapterClient
     public static async Task<List<EbAdapterClient>> FindActiveAsync()
     {
         var result = new List<EbAdapterClient>();
+        var diagnostics = new List<string>();
         foreach (var version in new[] { "2023", "2024", "2025" })
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Adapters", version, $"EBAssistant.Adapter{version}.exe");
             if (!File.Exists(path))
             {
+                diagnostics.Add($"EB {version} 适配器不存在：{path}");
                 continue;
             }
 
@@ -38,12 +42,20 @@ public sealed class EbAdapterClient
             {
                 result.Add(new EbAdapterClient(path, response.Data));
             }
+            else
+            {
+                diagnostics.Add($"EB {version}：{response.Message}");
+            }
         }
+        LastDiscoveryMessage = string.Join(Environment.NewLine, diagnostics);
         return result;
     }
 
     public Task<AdapterResponse<FolderTreeResult>> GetAttributeFolderTreeAsync() =>
         InvokeAsync<FolderTreeResult>(_adapterPath, "GetAttributeFolderTree", null);
+
+    public Task<AdapterResponse<AttributeFolderIdentity>> GetAttributeFolderIdentityAsync() =>
+        InvokeAsync<AttributeFolderIdentity>(_adapterPath, "GetAttributeFolderIdentity", null);
 
     public Task<AdapterResponse<CreateAttributesResult>> CreateAttributesAsync(CreateAttributesRequest request) =>
         InvokeAsync<CreateAttributesResult>(_adapterPath, "CreateAttributes", request);
@@ -62,6 +74,24 @@ public sealed class EbAdapterClient
 
     public Task<AdapterResponse<ApplyTypeDefinitionDialogsResult>> ApplyTypeDefinitionDialogsAsync(ApplyTypeDefinitionDialogsRequest request) =>
         InvokeAsync<ApplyTypeDefinitionDialogsResult>(_adapterPath, "ApplyTypeDefinitionDialogs", request);
+
+    public Task<AdapterResponse<ProjectTemplateIdentity>> GetProjectTemplateIdentityAsync() =>
+        InvokeAsync<ProjectTemplateIdentity>(_adapterPath, "GetProjectTemplateIdentity", null);
+
+    public Task<AdapterResponse<ProjectTemplateTreeResult>> GetProjectTemplateTreeAsync() =>
+        InvokeAsync<ProjectTemplateTreeResult>(_adapterPath, "GetProjectTemplateTree", null);
+
+    public Task<AdapterResponse<ValidateWorksheetAttributeIdsResult>> ValidateWorksheetAttributeIdsAsync(IEnumerable<int> ids) =>
+        InvokeAsync<ValidateWorksheetAttributeIdsResult>(
+            _adapterPath,
+            "ValidateWorksheetAttributeIds",
+            new ValidateWorksheetAttributeIdsRequest { AttributeIds = ids.Distinct().ToList() });
+
+    public Task<AdapterResponse<WorksheetCreationContextResult>> GetWorksheetCreationContextAsync(string templateProjectId) =>
+        InvokeAsync<WorksheetCreationContextResult>(
+            _adapterPath,
+            "GetWorksheetCreationContext",
+            new WorksheetCreationContextRequest { TemplateProjectId = templateProjectId });
 
     private static async Task<AdapterResponse<T>> InvokeAsync<T>(string path, string operation, object? request)
     {
