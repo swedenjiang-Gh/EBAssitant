@@ -14,6 +14,7 @@ public sealed class CreateAttributesForm : Form
     private string? _importedPath;
 
     public bool CreatedSuccessfully { get; private set; }
+    public IReadOnlyList<string> CreatedNames { get; private set; } = Array.Empty<string>();
 
     public CreateAttributesForm(EbAdapterClient client, AttributeFolderNode folder, IEnumerable<string> existingNames)
     {
@@ -93,14 +94,36 @@ public sealed class CreateAttributesForm : Form
         UseWaitCursor = false;
         _import.Enabled = true;
         _confirm.Enabled = true;
-        if (!response.Success || response.Data is null)
-        {
-            MessageBox.Show(this, response.Message, "创建属性失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return;
-        }
-        MessageBox.Show(this, $"已在“{_folder.FullPath}”中创建 {response.Data.CreatedCount} 个属性。", "创建属性", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
+        var result = response.Data ?? CreateFailureResult(request, response.Message);
+        result.TargetFolder = _folder.FullPath;
+        if (string.IsNullOrWhiteSpace(result.Status)) result.Status = response.Success ? "完成" : "失败";
+        if (string.IsNullOrWhiteSpace(result.Message)) result.Message = response.Message;
+        var logDirectory = AttributeCreationLogWriter.Write(result);
+        new AttributeCreationResultForm(result, logDirectory).Show();
+
+        CreatedNames = result.CreatedNames;
+        if (!response.Success) return;
+
         CreatedSuccessfully = true;
         DialogResult = DialogResult.OK;
         Close();
+    }
+
+    private static CreateAttributesResult CreateFailureResult(CreateAttributesRequest request, string message)
+    {
+        return new CreateAttributesResult
+        {
+            Status = "失败",
+            Message = message,
+            Records = request.Attributes.Select(x => new CreateAttributeOperationRecord
+            {
+                RowNumber = x.RowNumber,
+                Name = x.Name,
+                Type = x.Type,
+                Status = "创建失败",
+                Message = message
+            }).ToList()
+        };
     }
 }

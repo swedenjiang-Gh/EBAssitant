@@ -8,6 +8,7 @@ public sealed class AttributeFoldersForm : Form
     private readonly Button _refresh = new() { Text = "刷新", Width = 100, Height = 34 };
     private readonly List<Form> _childWindows = [];
     private EbAdapterClient? _client;
+    private AttributeFolderIdentity? _identity;
     private FolderTreeResult? _treeResult;
 
     public AttributeFoldersForm()
@@ -22,7 +23,7 @@ public sealed class AttributeFoldersForm : Form
         _tree.NodeMouseClick += (_, e) => { if (e.Button == MouseButtons.Right) _tree.SelectedNode = e.Node; };
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 48, Padding = new Padding(7), FlowDirection = FlowDirection.LeftToRight };
         toolbar.Controls.Add(_refresh);
-        _refresh.Click += async (_, _) => await LoadTreeAsync();
+        _refresh.Click += async (_, _) => await LoadFromEbAsync();
         Controls.Add(_tree);
         Controls.Add(toolbar);
         Controls.Add(_status);
@@ -36,7 +37,10 @@ public sealed class AttributeFoldersForm : Form
         if (active.Count == 0)
         {
             SetBusy(false, "未检测到当前活动 EB。");
-            MessageBox.Show(this, "未检测到正在运行的 EB，请先打开 EB 并连接数据库。", "属性", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            var detail = string.IsNullOrWhiteSpace(EbAdapterClient.LastDiscoveryMessage)
+                ? string.Empty
+                : $"{Environment.NewLine}{Environment.NewLine}诊断信息：{Environment.NewLine}{EbAdapterClient.LastDiscoveryMessage}";
+            MessageBox.Show(this, $"未检测到正在运行的 EB，请先打开 EB 并连接数据库。{detail}", "属性", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
@@ -46,7 +50,24 @@ public sealed class AttributeFoldersForm : Form
             Close();
             return;
         }
-        await LoadTreeAsync();
+        var identityResponse = await _client.GetAttributeFolderIdentityAsync();
+        if (!identityResponse.Success || identityResponse.Data is null)
+        {
+            SetBusy(false, identityResponse.Message);
+            MessageBox.Show(this, identityResponse.Message, "属性", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        _identity = identityResponse.Data;
+        var cached = AttributeFolderCache.Load(_identity);
+        if (cached is not null)
+        {
+            DisplayTree(cached);
+            SetBusy(false, $"已从缓存加载属性目录，共 {_tree.GetNodeCount(true)} 个目录。点击“刷新”可重新读取 EB。");
+            return;
+        }
+
+        await LoadFromEbAsync();
     }
 
     private EbAdapterClient? SelectAdapter(List<EbAdapterClient> active)
@@ -62,10 +83,10 @@ public sealed class AttributeFoldersForm : Form
         return dialog.ShowDialog(this) == DialogResult.OK ? list.SelectedItem as EbAdapterClient : null;
     }
 
-    private async Task LoadTreeAsync()
+    private async Task LoadFromEbAsync()
     {
-        if (_client is null) return;
-        SetBusy(true, $"正在读取 {_client.Connection.Version} 属性目录...");
+        if (_client is null || _identity is null) return;
+        SetBusy(true, $"正在从 EB {_client.Connection.Version} 重新读取属性目录...");
         var response = await _client.GetAttributeFolderTreeAsync();
         if (!response.Success || response.Data is null)
         {
@@ -74,16 +95,22 @@ public sealed class AttributeFoldersForm : Form
             return;
         }
 
-        _treeResult = response.Data;
+        AttributeFolderCache.Save(_identity, response.Data);
+        DisplayTree(response.Data);
+        SetBusy(false, $"已从 EB 读取并缓存 {_tree.GetNodeCount(true)} 个属性目录。");
+    }
+
+    private void DisplayTree(FolderTreeResult tree)
+    {
+        _treeResult = tree;
         _tree.BeginUpdate();
         _tree.Nodes.Clear();
-        foreach (var folder in response.Data.Folders)
+        foreach (var folder in tree.Folders)
         {
             _tree.Nodes.Add(ToTreeNode(folder));
         }
         _tree.EndUpdate();
         _tree.ExpandAll();
-        SetBusy(false, $"已连接 {_client.Connection.ApplicationName}，共读取 {_tree.GetNodeCount(true)} 个属性目录。");
     }
 
     private static TreeNode ToTreeNode(AttributeFolderNode folder)
@@ -98,12 +125,31 @@ public sealed class AttributeFoldersForm : Form
         if (_client is null || _treeResult is null || _tree.SelectedNode?.Tag is not AttributeFolderNode folder) return;
         var dialog = new CreateAttributesForm(_client, folder, _treeResult.ExistingAttributes.Select(x => x.Name));
         _childWindows.Add(dialog);
-        dialog.FormClosed += async (_, _) =>
+        dialog.FormClosed += (_, _) =>
         {
             _childWindows.Remove(dialog);
-            if (dialog.CreatedSuccessfully) await LoadTreeAsync();
+            if (dialog.CreatedNames.Count > 0) UpdateCreatedAttributes(dialog.CreatedNames);
         };
         dialog.Show();
+    }
+
+    private void UpdateCreatedAttributes(IEnumerable<string> createdNames)
+    {
+        if (_treeResult is null || _identity is null) return;
+
+        var existing = new HashSet<string>(
+            _treeResult.ExistingAttributes.Select(x => x.Name.Trim()),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var name in createdNames.Select(x => x.Trim()).Where(x => x.Length > 0))
+        {
+            if (existing.Add(name))
+            {
+                _treeResult.ExistingAttributes.Add(new ExistingAttribute { Name = name });
+            }
+        }
+
+        AttributeFolderCache.Save(_identity, _treeResult);
+        SetBusy(false, $"已创建 {createdNames.Count()} 个属性；目录树未重新读取，缓存已同步更新。");
     }
 
     private async Task CreateFolderAsync()
@@ -119,7 +165,7 @@ public sealed class AttributeFoldersForm : Form
             MessageBox.Show(this, response.Message, "新建目录失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
-        await LoadTreeAsync();
+        await LoadFromEbAsync();
         MessageBox.Show(this, $"目录“{name.Trim()}”已创建。", "新建目录", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 

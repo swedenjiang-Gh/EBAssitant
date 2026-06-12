@@ -37,7 +37,10 @@ public sealed class TypeDefinitionsForm : Form
         if (active.Count == 0)
         {
             SetBusy(false, "未检测到当前活动 EB。");
-            MessageBox.Show(this, "未检测到正在运行的 EB，请先打开 EB 并连接数据库。", "类型定义", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            var detail = string.IsNullOrWhiteSpace(EbAdapterClient.LastDiscoveryMessage)
+                ? string.Empty
+                : $"{Environment.NewLine}{Environment.NewLine}诊断信息：{Environment.NewLine}{EbAdapterClient.LastDiscoveryMessage}";
+            MessageBox.Show(this, $"未检测到正在运行的 EB，请先打开 EB 并连接数据库。{detail}", "类型定义", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
         _client = active[0];
