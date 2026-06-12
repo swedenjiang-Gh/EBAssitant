@@ -450,6 +450,8 @@ namespace EBAssistant.Adapter
         private static ProjectTemplateNode ReadProjectTemplateNode(ObjectItem item, string parentPath)
         {
             var path = parentPath + " / " + item.Name;
+            if (item.Kind != AucObjectKind.aucObjProject && !IsFolderKind(item.Kind)) return null;
+
             var node = new ProjectTemplateNode
             {
                 Id = item.ID,
@@ -459,16 +461,14 @@ namespace EBAssistant.Adapter
             };
             if (node.IsTemplateProject) return node;
 
-            var hasChildren = false;
             foreach (object raw in item.Children as IEnumerable)
             {
-                hasChildren = true;
                 var child = raw as ObjectItem;
                 if (child == null) continue;
                 var childNode = ReadProjectTemplateNode(child, path);
                 if (childNode != null) node.Children.Add(childNode);
             }
-            return hasChildren ? node : null;
+            return node.Children.Count > 0 ? node : null;
         }
 
         private static TypeDefinitionNode ReadTypeDefinitionObject(EbApplication app, ObjectItem item, string parentPath, TypeDefinition definition)
@@ -615,10 +615,11 @@ namespace EBAssistant.Adapter
             if (template == null || template.Kind != AucObjectKind.aucObjProject)
                 return Fail<WorksheetCreationContextResult>("无法解析模板项目。");
 
-            var worksheetsFolder = FindDirectChildByName(template.Children as IEnumerable, "工作表");
-            if (worksheetsFolder == null)
-                return Fail<WorksheetCreationContextResult>("模板项目下未找到 /工作表。");
+            var worksheetFolders = FindDirectChildrenByName(template.Children as IEnumerable, "工作表");
+            if (worksheetFolders.Count != 1)
+                return Fail<WorksheetCreationContextResult>("模板项目下未找到唯一的 /工作表。");
 
+            var worksheetsFolder = worksheetFolders[0];
             var favorites = FindDirectChildrenByName(worksheetsFolder.Children as IEnumerable, "收藏");
             if (favorites.Count != 1)
                 return Fail<WorksheetCreationContextResult>("模板项目下未找到唯一的 /工作表/收藏。");
@@ -745,6 +746,12 @@ namespace EBAssistant.Adapter
                 if (child != null && string.Equals(child.Name, name, StringComparison.OrdinalIgnoreCase)) return child;
             }
             return null;
+        }
+
+        private static bool IsFolderKind(AucObjectKind kind)
+        {
+            var name = kind.ToString();
+            return name.IndexOf("Folder", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static List<ObjectItem> FindDirectChildrenByName(IEnumerable children, string name)

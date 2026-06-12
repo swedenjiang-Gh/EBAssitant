@@ -13,6 +13,7 @@ internal static class ProjectTemplateCacheTests
         var root = NewRootDirectory();
         var identityA = new ProjectTemplateIdentity { Version = "2023", RootId = "A", RootName = "Root" };
         var identityB = new ProjectTemplateIdentity { Version = "2024", RootId = "A", RootName = "Root" };
+        var identityC = new ProjectTemplateIdentity { Version = "2023", RootId = "B", RootName = "Root" };
         var tree = new ProjectTemplateTreeResult
         {
             Identity = identityA,
@@ -26,12 +27,14 @@ internal static class ProjectTemplateCacheTests
 
         var loadedA = ProjectTemplateCache.Load(identityA, root);
         var loadedB = ProjectTemplateCache.Load(identityB, root);
+        var loadedC = ProjectTemplateCache.Load(identityC, root);
 
         Assert.NotNull(loadedA);
         Assert.Equal("2023", loadedA!.Identity.Version);
         Assert.Equal(1, loadedA.Nodes.Count);
         Assert.Equal("P1", loadedA.Nodes[0].Id);
         Assert.Null(loadedB);
+        Assert.Null(loadedC);
     }
 
     private static void ReturnsNullWhenProtocolVersionDoesNotMatch()
