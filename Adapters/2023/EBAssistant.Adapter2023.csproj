@@ -2,12 +2,12 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <TargetFrameworkVersion>v4.6.2</TargetFrameworkVersion>
-    <RootNamespace>EBAssist.Adapter</RootNamespace>
-    <AssemblyName>EBAssist.Adapter2024</AssemblyName>
+    <RootNamespace>EBAssistant.Adapter</RootNamespace>
+    <AssemblyName>EBAssistant.Adapter2023</AssemblyName>
     <PlatformTarget>x86</PlatformTarget>
-    <DefineConstants>TRACE;EB31</DefineConstants>
+    <DefineConstants>TRACE;EB30</DefineConstants>
     <NoWarn>0649</NoWarn>
-    <OutputPath>..\..\bin\Debug\net9.0-windows\Adapters\2024\</OutputPath>
+    <OutputPath>..\..\bin\Debug\net10.0-windows\Adapters\2023\</OutputPath>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
@@ -20,7 +20,7 @@
   </ItemGroup>
   <ItemGroup>
     <COMReference Include="Aucotec">
-      <WrapperTool>tlbimp</WrapperTool><VersionMinor>0</VersionMinor><VersionMajor>31</VersionMajor>
+      <WrapperTool>tlbimp</WrapperTool><VersionMinor>0</VersionMinor><VersionMajor>30</VersionMajor>
       <Guid>{101D8CF0-E1D8-11D2-B72E-00805F52B443}</Guid><Lcid>0</Lcid><Isolated>false</Isolated><EmbedInteropTypes>false</EmbedInteropTypes>
     </COMReference>
   </ItemGroup>
