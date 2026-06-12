@@ -1,3 +1,10 @@
+// 人工验证清单：
+// worksheet-import.xlsx / worksheet-import.xls:
+// - 2 个页签，顺序为 设备清单、备用设备
+// - 第一列内容不进入预览
+// - 第 2 列起第一行为标签、第二行为 AID
+// - 第三行故意填写内容但不进入预览
+
 namespace EBAssistant.Tests;
 
 internal static class WorksheetImportBuilderTests
