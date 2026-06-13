@@ -124,6 +124,8 @@ public sealed class WorksheetOperationRecord
     public string SavePath { get; set; } = "";
     public string ObjectType { get; set; } = "器件";
     public int ColumnCount { get; set; }
+    public string ColumnSummary { get; set; } = "";
+    public string LabelStatus { get; set; } = "";
     public string AutoWidthStatus { get; set; } = "";
     public string Status { get; set; } = "";
     public string Message { get; set; } = "";

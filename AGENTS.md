@@ -19,7 +19,7 @@ EBAssistant 是一个面向 Aucotec Engineering Base（EB）的 Windows 桌面�
 - 图形模板
 - 工具面板配置
 
-当前已经实现“属性”和“类型定义”。其余四个入口目前只显示“将在后续开发中实现”的提示。
+当前已经实现“属性”“类型定义”和“工作表”。其余三个入口目前只显示“将在后续开发中实现”的提示。
 
 ## 2. 目录与技术栈
 
@@ -46,7 +46,7 @@ EBAssistant 是一个面向 Aucotec Engineering Base（EB）的 Windows 桌面�
 `MainForm`：
 
 - 窗口标题为 `EB Assistant`。
-- “属性”和“类型定义”使用 `Form.Show()` 打开独立非模态窗口。
+- “属性”“类型定义”和“工作表”使用 `Form.Show()` 打开独立非模态窗口。
 - 主界面和已打开的功能窗口可以同时操作。
 - `_openWindows` 用于持有功能窗口引用，避免窗口被提前回收。
 
@@ -89,6 +89,11 @@ EB 2023 和 2024 共用 `Adapters/AdapterProgram.cs`，通过编译常量区分�
 - `GetTypeDefinitionTree`
 - `ValidateAttributeIds`
 - `ApplyTypeDefinitionDialogs`
+- `GetProjectTemplateIdentity`
+- `GetProjectTemplateTree`
+- `ValidateWorksheetAttributeIds`
+- `GetWorksheetCreationContext`
+- `CreateWorksheets`
 
 ## 4. “属性”功能
 
@@ -412,9 +417,12 @@ EBAssistant 当前批量创建属性已经具备失败回滚；类型定义批�
 
 #### 工作表
 
-- 工作表查询、打开和导出已有确认路径。
-- `worksheet.create.with.columns` 仍属于候选/未开始能力。
-- 开发“工作表”入口时，可以先做查询、打开、导出；不要直接假设创建和列配置 API 已确认。
+- 项目模板树来自 `Application.Folders.ProjectTemplates`，按“EB 版本 + 根目录 ID”缓存；只有用户点击“刷新”才重读。
+- 工作表配置保存位置使用所选项目的 `Project.WorksheetTemplatesFolder` 下唯一 `aucObjFavoriteListConfigurations`，显示路径为 `/工作表/收藏夹`。
+- 创建工作表时必须使用同一个所选项目自己的 `EquipmentFolder.OpenWorksheetDirect(...)`，完成列配置和列宽后再保存到该项目收藏夹；不得跨项目创建后移动。
+- 已确认 `Worksheet.Attributes.Add(...)`、`WorksheetAttribute.Width`、`Worksheet.ProtectColumnWidth`、`Worksheet.SaveConfiguration(...)` 和收藏夹读回路径。
+- 自定义列标签暂不实现。Excel 第一行标签只用于预览、列宽计算和日志；正式 `CreateWorksheets` 不调用 `aucCmdEditColumnLabel` 或 UI Automation。
+- 工作表对象类型当前固定为器件；单个工作表失败后继续其他有效工作表，每次操作保存 JSON/TXT 日志并展示结果。
 
 #### 权限配置
 

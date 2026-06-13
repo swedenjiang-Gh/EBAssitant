@@ -50,6 +50,7 @@ namespace EBAssistant.Adapter
                 if (operation == "ValidateWorksheetAttributeIds") return Write(ValidateWorksheetAttributeIds(app, Read<ValidateWorksheetAttributeIdsRequest>()));
                 if (operation == "GetWorksheetCreationContext") return Write(GetWorksheetCreationContext(app, Read<WorksheetCreationContextRequest>()));
                 if (operation == "ValidateWorksheetCreationCapability") return Write(ValidateWorksheetCreationCapability(app, Read<ValidateWorksheetCreationCapabilityRequest>()));
+                if (operation == "CreateWorksheets") return Write(CreateWorksheets(app, Read<CreateWorksheetsRequest>()));
                 if (operation == "ApplyTypeDefinitionDialogs") return Write(ApplyTypeDefinitionDialogs(app, Read<ApplyTypeDefinitionDialogsRequest>()));
                 return Write(Fail<object>("未知操作：" + operation));
             }
@@ -754,6 +755,133 @@ namespace EBAssistant.Adapter
                 {
                     result.CleanupChecks.Add("未发现需要删除的临时工作表配置。");
                 }
+            }
+        }
+
+        private static AdapterResponse<CreateWorksheetsResult> CreateWorksheets(EbApplication app, CreateWorksheetsRequest request)
+        {
+            var result = new CreateWorksheetsResult { Status = "completed" };
+            if (request == null || string.IsNullOrWhiteSpace(request.TemplateProjectId) || request.Worksheets == null)
+                return Fail<CreateWorksheetsResult>("工作表创建请求无效。");
+
+            Project project;
+            ObjectItem favorite;
+            string projectPath;
+            string targetPath;
+            string error;
+            if (!TryResolveWorksheetTarget(app, request.TemplateProjectId, out project, out favorite, out projectPath, out targetPath, out error))
+                return Fail<CreateWorksheetsResult>(error);
+
+            var equipmentFolder = project.EquipmentFolder;
+            if (equipmentFolder == null)
+                return Fail<CreateWorksheetsResult>("所选项目下未找到设备目录。");
+
+            var reservedNames = new List<string>();
+            foreach (object raw in favorite.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && child.Kind == AucObjectKind.aucObjSheet)
+                    reservedNames.Add(child.Name);
+            }
+
+            foreach (var item in request.Worksheets.OrderBy(x => x.SheetIndex))
+            {
+                var requestedName = string.IsNullOrWhiteSpace(item.RequestedName) ? item.OriginalName : item.RequestedName;
+                var finalName = ResolveWorksheetName(requestedName, reservedNames);
+                var record = new WorksheetOperationRecord
+                {
+                    SheetIndex = item.SheetIndex,
+                    OriginalName = item.OriginalName,
+                    FinalName = finalName,
+                    SavePath = targetPath + " / " + finalName,
+                    ObjectType = "器件",
+                    ColumnCount = item.Columns == null ? 0 : item.Columns.Count,
+                    ColumnSummary = item.Columns == null ? "" : string.Join("；", item.Columns.OrderBy(x => x.Position).Select(x => x.Label + " (AID=" + x.AttributeId + ")")),
+                    LabelStatus = "未写入 EB（EB 显示默认属性名称）",
+                    AutoWidthStatus = "待设置"
+                };
+                Worksheet worksheet = null;
+                try
+                {
+                    if (string.IsNullOrWhiteSpace(finalName))
+                        throw new InvalidOperationException("工作表名称不能为空。");
+                    if (item.Columns == null || item.Columns.Count == 0)
+                        throw new InvalidOperationException("工作表没有可创建的列。");
+
+                    worksheet = equipmentFolder.OpenWorksheetDirect(
+                        AucObjectKind.aucObjDevice,
+                        AucAttribute.aucAttrUnspecified,
+                        AucVbFindCondition.aucCondEqual,
+                        "");
+                    foreach (var column in item.Columns.OrderBy(x => x.Position))
+                    {
+                        if (column.AttributeId <= 0)
+                            throw new InvalidOperationException("属性 ID 必须是正整数。");
+                        var worksheetAttribute = worksheet.Attributes.Add((AucAttribute)column.AttributeId, column.Position);
+                        worksheetAttribute.Width = column.Width;
+                    }
+                    worksheet.ProtectColumnWidth = true;
+                    record.AutoWidthStatus = "已按 Excel 标签计算并设置";
+                    worksheet.SaveConfiguration(finalName, favorite);
+
+                    var readback = FindUniqueDirectChildByName(favorite.Children as IEnumerable, finalName);
+                    if (readback == null)
+                        throw new InvalidOperationException("保存后无法在工作表收藏夹中读回配置。");
+
+                    reservedNames.Add(finalName);
+                    record.Status = "created";
+                    record.Message = "工作表已创建并读回确认；Excel 列标签仅用于预览、列宽计算和日志。";
+                }
+                catch (Exception ex)
+                {
+                    result.Status = result.Records.Any(x => x.Status == "created") ? "partial" : "failed";
+                    record.Status = "failed";
+                    record.Message = Describe(ex);
+                }
+                finally
+                {
+                    if (worksheet != null)
+                    {
+                        try { worksheet.Close(); }
+                        catch (Exception ex)
+                        {
+                            record.Message = string.IsNullOrWhiteSpace(record.Message)
+                                ? "关闭工作表失败：" + Describe(ex)
+                                : record.Message + "；关闭工作表失败：" + Describe(ex);
+                        }
+                    }
+                }
+                result.Records.Add(record);
+            }
+
+            if (result.Records.Count == 0)
+                result.Status = "failed";
+            else if (result.Records.All(x => x.Status == "created"))
+                result.Status = "completed";
+            else if (result.Records.Any(x => x.Status == "created"))
+                result.Status = "partial";
+            else
+                result.Status = "failed";
+
+            return new AdapterResponse<CreateWorksheetsResult>
+            {
+                Success = result.Status != "failed",
+                Message = result.Status == "completed" ? "工作表创建完成。" : result.Status == "partial" ? "部分工作表创建完成。" : "工作表创建失败。",
+                Data = result
+            };
+        }
+
+        private static string ResolveWorksheetName(string baseName, IEnumerable<string> reservedNames)
+        {
+            var trimmed = (baseName ?? "").Trim();
+            var reserved = new HashSet<string>(
+                reservedNames.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()),
+                StringComparer.OrdinalIgnoreCase);
+            if (!reserved.Contains(trimmed)) return trimmed;
+            for (var suffix = 2; ; suffix++)
+            {
+                var candidate = trimmed + " (" + suffix + ")";
+                if (!reserved.Contains(candidate)) return candidate;
             }
         }
 
@@ -1526,6 +1654,11 @@ namespace EBAssistant.Adapter
     [DataContract] internal sealed class WorksheetCreationContextResult { [DataMember] public string TemplateProjectPath; [DataMember] public string TargetFolderPath; [DataMember] public List<string> ExistingWorksheetNames = new List<string>(); }
     [DataContract] internal sealed class ValidateWorksheetCreationCapabilityRequest { [DataMember] public string TemplateProjectId; [DataMember] public List<int> AttributeIds = new List<int>(); }
     [DataContract] internal sealed class ValidateWorksheetCreationCapabilityResult { [DataMember] public bool Passed; [DataMember] public string TemporaryWorksheetName; [DataMember] public string TargetFolderPath; [DataMember] public List<string> Checks = new List<string>(); [DataMember] public List<string> CleanupChecks = new List<string>(); }
+    [DataContract] internal sealed class CreateWorksheetsRequest { [DataMember] public string TemplateProjectId; [DataMember] public List<CreateWorksheetItem> Worksheets = new List<CreateWorksheetItem>(); }
+    [DataContract] internal sealed class CreateWorksheetItem { [DataMember] public int SheetIndex; [DataMember] public string OriginalName; [DataMember] public string RequestedName; [DataMember] public List<CreateWorksheetColumnItem> Columns = new List<CreateWorksheetColumnItem>(); }
+    [DataContract] internal sealed class CreateWorksheetColumnItem { [DataMember] public int Position; [DataMember] public string Label; [DataMember] public int AttributeId; [DataMember] public int Width; }
+    [DataContract] internal sealed class WorksheetOperationRecord { [DataMember] public int SheetIndex; [DataMember] public string OriginalName; [DataMember] public string FinalName; [DataMember] public string SavePath; [DataMember] public string ObjectType; [DataMember] public int ColumnCount; [DataMember] public string ColumnSummary; [DataMember] public string LabelStatus; [DataMember] public string AutoWidthStatus; [DataMember] public string Status; [DataMember] public string Message; }
+    [DataContract] internal sealed class CreateWorksheetsResult { [DataMember] public string Status; [DataMember] public List<WorksheetOperationRecord> Records = new List<WorksheetOperationRecord>(); }
     [DataContract] internal sealed class DialogDefinitionItem { [DataMember] public string TabName; [DataMember] public int AttributeId; }
     [DataContract] internal sealed class ApplyTypeDefinitionDialogsRequest { [DataMember] public List<string> TypeItemIds; [DataMember] public List<DialogDefinitionItem> Definitions; }
     [DataContract] internal sealed class TypeDefinitionOperationRecord { [DataMember] public string TypeItemId; [DataMember] public string TypeItemName; [DataMember] public int AttributeId; [DataMember] public string TabName; [DataMember] public string Status; [DataMember] public string Message; }

@@ -100,6 +100,9 @@ public sealed class EbAdapterClient
             "ValidateWorksheetCreationCapability",
             request);
 
+    public Task<AdapterResponse<CreateWorksheetsResult>> CreateWorksheetsAsync(CreateWorksheetsRequest request) =>
+        InvokeAsync<CreateWorksheetsResult>(_adapterPath, "CreateWorksheets", request);
+
     private static async Task<AdapterResponse<T>> InvokeAsync<T>(string path, string operation, object? request)
     {
         var startInfo = new ProcessStartInfo

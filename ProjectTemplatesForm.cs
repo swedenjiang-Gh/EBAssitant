@@ -17,7 +17,7 @@ public sealed class ProjectTemplatesForm : Form
         Size = new Size(760, 620);
         Font = new Font("Microsoft YaHei UI", 10F);
 
-        _menu.Items.Add("新建工作表", null, (_, _) => ShowCreatePlaceholder());
+        _menu.Items.Add("新建工作表", null, (_, _) => ShowCreateWorksheets());
         _tree.NodeMouseClick += TreeNodeMouseClick;
 
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 48, Padding = new Padding(7), FlowDirection = FlowDirection.LeftToRight };
@@ -131,9 +131,13 @@ public sealed class ProjectTemplatesForm : Form
             _menu.Show(_tree, e.Location);
     }
 
-    private void ShowCreatePlaceholder()
+    private void ShowCreateWorksheets()
     {
-        MessageBox.Show(this, "后续任务实现", "新建工作表", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        if (_client is null || _tree.SelectedNode?.Tag is not ProjectTemplateNode { IsTemplateProject: true } project) return;
+        var form = new CreateWorksheetsForm(_client, project);
+        _childWindows.Add(form);
+        form.FormClosed += (_, _) => _childWindows.Remove(form);
+        form.Show();
     }
 
     private void SetBusy(bool busy, string message)

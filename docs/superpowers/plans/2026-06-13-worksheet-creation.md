@@ -4,7 +4,7 @@
 
 **Goal:** 在 EBAssistant 中实现带项目模板树缓存、Excel 多页签预览校验、器件工作表批量创建、自动列宽和完整日志的“工作表”功能。
 
-**Architecture:** WinForms 主程序继续只负责缓存、Excel 解析、预览校验和结果展示；所有 EB COM 读取、写入和受控交互命令自动化继续放在 2023/2024 x86 `.NET Framework 4.6.2` 适配器中，并通过现有 JSON stdin/stdout 协议调用。正式写入前先以独立开发操作完成一次受控能力验证；只有列标签、列顺序、列宽、保存位置、读回和清理全部通过，才实施并启用正式 `CreateWorksheets`。
+**Architecture:** WinForms 主程序继续只负责缓存、Excel 解析、预览校验和结果展示；所有 EB COM 读取与写入继续放在 2023/2024 x86 `.NET Framework 4.6.2` 适配器中，并通过现有 JSON stdin/stdout 协议调用。自定义列标签编辑暂不实现；Excel 标签仅用于预览、列宽计算和日志，不再阻塞正式 `CreateWorksheets`。
 
 **Tech Stack:** C#、WinForms、`.NET 10.0-windows`、ExcelDataReader、强类型 Aucotec COM 30/31、`.NET Framework 4.6.2` x86、System.Text.Json、DataContractJsonSerializer
 
@@ -26,8 +26,7 @@
   - `Worksheet.SaveConfiguration(name, targetFolder)`
   - `Worksheet.ConfigurationObject`
   - `Worksheet.Close()`
-- 当前公开强类型 COM 中 `WorksheetAttribute.Name` 只有 getter。用户已允许使用 `IAucVbaInternUtils.ExecuteCommand(AucCommand.aucCmdEditColumnLabel, sourceObject)` 配合隐藏的 UI Automation/Win32 对话框处理写入自定义列标签。Task 6 必须先验证准确配方；若验证失败，停止正式写入实现并报告，不得用属性名称冒充 Excel 第一行标签。
-- 交互命令执行时允许短暂切换焦点到 EB；无需用户操作的交互界面必须立即隐藏并自动处理。优先使用 UI Automation，Win32 消息只作为同一已确认对话框的后备；禁止固定坐标和盲目 `SendKeys`。
+- 当前公开强类型 COM 中 `WorksheetAttribute.Name` 只有 getter。用户已明确暂时跳过自定义列标签编辑；正式流程不调用交互命令或 UI Automation。
 - 正式功能不执行临时能力验证，也不重复读回列宽；一次性能力验证只在开发阶段显式调用。
 - 自动列宽采用确定性计算后写入 `WorksheetAttribute.Width`：ASCII 字符按 1 个单位、非 ASCII 字符按 2 个单位，结果为 `Math.Clamp(visualUnits * 9 + 24, 80, 600)`。Task 6 必须在真实 EB 中确认该宽度足以完整显示长标签。
 - 只删除一次性验证创建的明确临时工作表对象；不得删除用户已有工作表。
@@ -651,14 +650,14 @@ private static AdapterResponse<ProjectTemplateIdentity> GetProjectTemplateIdenti
 
 `GetProjectTemplateTree` 从 `app.Folders.ProjectTemplates.Children` 按枚举顺序递归。节点只保留：
 
-- `AucObjectKind.aucObjProject`：`IsTemplateProject=true`，作为叶节点，不遍历其内部 `/工作表/收藏`。
+- `AucObjectKind.aucObjProject`：`IsTemplateProject=true`，作为叶节点，不遍历其内部 `/工作表/收藏夹`。
 - 其他拥有子节点的项目模板目录对象：`IsTemplateProject=false`，继续递归。
 
 不得按名称排序，完整路径使用 `父路径 + " / " + 当前名称`。
 
 `ValidateWorksheetAttributeIds` 复用现有 `ValidateAttributeIds` 的两条验证路径，但使用独立请求/响应类型，避免未来工作表校验语义与类型定义耦合。
 
-`GetWorksheetCreationContext` 必须重新解析模板项目，定位唯一 `/工作表/收藏`，并返回模板项目完整路径、收藏完整路径和按 EB 原始顺序枚举的已有工作表名称。只读上下文读取失败时返回失败，不进行任何写入。
+`GetWorksheetCreationContext` 必须重新解析模板项目，定位唯一 `/工作表/收藏夹`，并返回模板项目完整路径、收藏夹完整路径和按 EB 原始顺序枚举的已有工作表名称。只读上下文读取失败时返回失败，不进行任何写入。
 
 - [ ] **Step 6: 同步适配器 DataContract 模型**
 
@@ -740,7 +739,7 @@ Expected: 测试通过；主程序和 2023/2024/2025 适配器构建成功。
 & .\bin\Debug\net10.0-windows\Adapters\2023\EBAssistant.Adapter2023.exe GetProjectTemplateTree
 ```
 
-Expected: 返回项目模板根 ID；树保持 EB 顺序；模板项目为叶节点；结果不包含模板项目内部“工作表”“收藏”和已有工作表。
+Expected: 返回项目模板根 ID；树保持 EB 顺序；模板项目为叶节点；结果不包含模板项目内部“工作表”“收藏夹”和已有工作表。
 
 - [ ] **Step 9: 提交只读树和缓存**
 
@@ -952,7 +951,7 @@ git commit -m "test: verify worksheet creation capability"
 
 ### Task 7: 实现正式批量创建工作表适配器操作
 
-**前置门槛:** Task 6 的验证文档必须明确 `Passed=true` 并记录列标签写入配方；否则不执行本任务。
+**前置门槛:** 已确认创建、添加列、列宽、保存和清理能力。自定义列标签写入已由用户明确暂时跳过。
 
 **Files:**
 - Modify: `EbAdapterClient.cs`
@@ -994,13 +993,12 @@ if (operation == "CreateWorksheets") return Write(CreateWorksheets(app, Read<Cre
 
 1. 使用所选项目自身的 `EquipmentFolder.OpenWorksheetDirect(AucObjectKind.aucObjDevice, AucAttribute.aucAttrUnspecified, AucVbFindCondition.aucCondEqual, "")` 创建空器件工作表。
 2. 按 `Position` 顺序调用 `worksheet.Attributes.Add((AucAttribute)column.AttributeId, column.Position)`。
-3. 使用 Task 6 已验证的准确公共 API 设置 `column.Label`。
+3. 不写入 `column.Label`；EB 使用默认属性名称，日志记录 Excel 标签未写入。
 4. 设置 `WorksheetAttribute.Width = column.Width`。
 5. 设置 `worksheet.ProtectColumnWidth = true`。
 6. 调用 `worksheet.SaveConfiguration(finalName, favoritesFolder)`。
-7. 从收藏夹读回配置对象，并从同一项目的“设备”目录打开工作表后完成需要交互窗口的修改。
-8. 保存成功后记录完整路径，格式为“项目模板 / 模板项目完整路径 / 工作表 / 收藏夹 / 最终工作表名称”。
-9. `finally` 中调用 `worksheet.Close()`；即使关闭失败，也继续执行本次明确临时对象的清理和读回确认。
+7. 保存成功后记录完整路径，格式为“项目模板 / 模板项目完整路径 / 工作表 / 收藏夹 / 最终工作表名称”。
+8. `finally` 中调用 `worksheet.Close()`。
 
 任一列配置、标签、列宽或保存步骤失败时，该工作表记录 `Status="failed"`，继续下一个工作表。正式流程不创建临时验证对象、不重复验证列宽。
 
@@ -1031,9 +1029,9 @@ Run:
 
 使用一个脱敏的两页签样例在受控模板项目中验证：
 
-- 两个工作表均保存到“收藏”
+- 两个工作表均保存到“收藏夹”
 - 对象类型为器件
-- 列顺序、标签和列宽正确
+- 列顺序和列宽正确；标签仅记录到预览和日志
 - 同名时使用最小可用后缀
 - 单个失败不阻止后续工作表
 
@@ -1202,7 +1200,7 @@ Run:
 dotnet build .\EBAssistant.csproj
 ```
 
-Expected: 每次确认后均出现结果窗口；JSON、TXT 和窗口记录数量及状态一致；按钮可打开正确目录；每个成功项显示完整“/工作表/收藏/最终工作表名称”路径和自动列宽结果。
+Expected: 每次确认后均出现结果窗口；JSON、TXT 和窗口记录数量及状态一致；按钮可打开正确目录；每个成功项显示完整“/工作表/收藏夹/最终工作表名称”路径和自动列宽结果。
 
 - [ ] **Step 5: 提交结果和日志**
 
@@ -1225,7 +1223,7 @@ git commit -m "feat: log worksheet creation results"
 - 仅模板项目可右键“新建工作表”
 - 每个 Excel 页签对应一个工作表
 - 第一列忽略；第二列起第一行为标签、第二行为 AID
-- 工作表固定为器件并保存到 `/工作表/收藏`
+- 工作表固定为器件并保存到 `/工作表/收藏夹`
 - 日志目录 `%LOCALAPPDATA%\EBAssistant\Logs\Worksheets`
 
 - [ ] **Step 2: 运行全部纯逻辑测试**
@@ -1269,8 +1267,8 @@ Expected: 新增工作表代码不含 `dynamic` 和占位文本；已有无关�
 1. 主界面可同时打开“属性”“类型定义”“工作表”。
 2. 工作表树首次读取并缓存，后续秒开，刷新才重读。
 3. 树顺序和 EB 一致，默认折叠，不显示模板项目内部工作表。
-4. 两页签 Excel 创建两个器件工作表到所选模板项目 `/工作表/收藏`。
-5. 标签、AID、列顺序和自动列宽正确。
+4. 两页签 Excel 创建两个器件工作表到所选模板项目 `/工作表/收藏夹`。
+5. AID、列顺序和自动列宽正确；标签只出现在预览和日志。
 6. 同名使用最小可用后缀。
 7. 一个无效页签被跳过，其他有效页签继续。
 8. 一个创建失败后，后续工作表继续。
@@ -1303,8 +1301,8 @@ git commit -m "docs: document worksheet creation workflow"
 - 只有模板项目节点可右键“新建工作表”。
 - Excel 全页签、第二列起、第一行标签、第二行 AID 的规则正确实现。
 - 无效页签跳过，其他有效页签继续；AID 在当前 EB 中准确校验。
-- 正式创建固定使用器件类型，保存到所选模板项目 `/工作表/收藏`。
-- 自定义列标签、列顺序和自动列宽经过一次性真实 EB 能力验证，正式流程不重复探测。
+- 正式创建固定使用器件类型，保存到所选模板项目 `/工作表/收藏夹`。
+- 列顺序和自动列宽经过一次性真实 EB 能力验证；自定义列标签暂不实现。
 - 同名使用最小可用后缀；单个创建失败不阻止后续工作表。
 - 每次确认自动保存 JSON/TXT 日志并显示结果窗口和日志路径按钮。
 - 主程序、全部适配器构建通过；新增工作表代码无 `dynamic`；新增文本为 UTF-8 无 BOM。
