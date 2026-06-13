@@ -130,6 +130,14 @@ public sealed class MainForm : Form
             form.Show();
             return;
         }
+        if (functionName == "权限配置")
+        {
+            var form = new PermissionConfigurationForm();
+            _openWindows.Add(form);
+            form.FormClosed += (_, _) => _openWindows.Remove(form);
+            form.Show();
+            return;
+        }
 
         MessageBox.Show(
             $"{functionName}功能界面将在后续开发中实现。",
