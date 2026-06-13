@@ -477,11 +477,22 @@ namespace EBAssistant.Adapter
             return node.Children.Count > 0 ? node : null;
         }
 
+        private static void ReadPermissionConfigurationFolders(
+            EbApplication app,
+            out ObjectItem usersAndGroups,
+            out ObjectItem messages)
+        {
+            dynamic folders = app.Folders;
+            usersAndGroups = folders.UsersAndGroups as ObjectItem;
+            messages = folders.Messages as ObjectItem;
+            if (usersAndGroups == null || messages == null)
+                throw new InvalidOperationException("EB 未返回用户及用户组目录或消息目录。");
+        }
+
         private static PermissionConfigurationIdentity ReadPermissionConfigurationIdentity(EbApplication app)
         {
             var root = app.RootObject;
-            var usersAndGroups = app.Folders.UsersAndGroups;
-            var messages = app.Folders.Messages;
+            ReadPermissionConfigurationFolders(app, out var usersAndGroups, out var messages);
             return new PermissionConfigurationIdentity
             {
                 Version = Version,
@@ -508,22 +519,25 @@ namespace EBAssistant.Adapter
                 Name = item.Name,
                 FullPath = path,
             };
-            foreach (object raw in item.Children as IEnumerable)
+            try
             {
-                var child = raw as ObjectItem;
-                if (child == null) continue;
-                var childNode = ReadPermissionDirectoryNode(child, path);
-                node.Children.Add(childNode);
+                foreach (object raw in item.Children as IEnumerable)
+                {
+                    var child = raw as ObjectItem;
+                    if (child == null) continue;
+                    var childNode = ReadPermissionDirectoryNode(child, path);
+                    node.Children.Add(childNode);
+                }
             }
+            // EB user and group leaves reject Children with 0x80046951.
+            catch (COMException ex) when (ex.ErrorCode == unchecked((int)0x80046951)) { }
             return node;
         }
 
         private static AdapterResponse<PermissionConfigurationStructureResult> GetPermissionConfigurationStructure(EbApplication app)
         {
             var identity = ReadPermissionConfigurationIdentity(app);
-            var usersAndGroups = app.Folders.UsersAndGroups;
-            var messages = app.Folders.Messages;
-
+            ReadPermissionConfigurationFolders(app, out var usersAndGroups, out var messages);
             var result = new PermissionConfigurationStructureResult
             {
                 Identity = identity,
