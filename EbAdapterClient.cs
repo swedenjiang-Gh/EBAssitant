@@ -81,11 +81,17 @@ public sealed class EbAdapterClient
     public Task<AdapterResponse<ProjectTemplateTreeResult>> GetProjectTemplateTreeAsync() =>
         InvokeAsync<ProjectTemplateTreeResult>(_adapterPath, "GetProjectTemplateTree", null);
 
+    public Task<AdapterResponse<PermissionConfigurationIdentity>> GetPermissionConfigurationIdentityAsync() =>
+        InvokeAsync<PermissionConfigurationIdentity>(_adapterPath, "GetPermissionConfigurationIdentity", null);
+
+    public Task<AdapterResponse<PermissionConfigurationStructureResult>> GetPermissionConfigurationStructureAsync() =>
+        InvokeAsync<PermissionConfigurationStructureResult>(_adapterPath, "GetPermissionConfigurationStructure", null);
     public Task<AdapterResponse<ValidateWorksheetAttributeIdsResult>> ValidateWorksheetAttributeIdsAsync(IEnumerable<int> ids) =>
         InvokeAsync<ValidateWorksheetAttributeIdsResult>(
             _adapterPath,
             "ValidateWorksheetAttributeIds",
             new ValidateWorksheetAttributeIdsRequest { AttributeIds = ids.Distinct().ToList() });
+
 
     public Task<AdapterResponse<WorksheetCreationContextResult>> GetWorksheetCreationContextAsync(string templateProjectId) =>
         InvokeAsync<WorksheetCreationContextResult>(

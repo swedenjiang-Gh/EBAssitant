@@ -47,6 +47,8 @@ namespace EBAssistant.Adapter
                 if (operation == "ValidateAttributeIds") return Write(ValidateAttributeIds(app, Read<ValidateAttributeIdsRequest>()));
                 if (operation == "GetProjectTemplateIdentity") return Write(GetProjectTemplateIdentity(app));
                 if (operation == "GetProjectTemplateTree") return Write(GetProjectTemplateTree(app));
+                if (operation == "GetPermissionConfigurationIdentity") return Write(GetPermissionConfigurationIdentity(app));
+                if (operation == "GetPermissionConfigurationStructure") return Write(GetPermissionConfigurationStructure(app));
                 if (operation == "ValidateWorksheetAttributeIds") return Write(ValidateWorksheetAttributeIds(app, Read<ValidateWorksheetAttributeIdsRequest>()));
                 if (operation == "GetWorksheetCreationContext") return Write(GetWorksheetCreationContext(app, Read<WorksheetCreationContextRequest>()));
                 if (operation == "ValidateWorksheetCreationCapability") return Write(ValidateWorksheetCreationCapability(app, Read<ValidateWorksheetCreationCapabilityRequest>()));
@@ -473,6 +475,79 @@ namespace EBAssistant.Adapter
                 if (childNode != null) node.Children.Add(childNode);
             }
             return node.Children.Count > 0 ? node : null;
+        }
+
+        private static PermissionConfigurationIdentity ReadPermissionConfigurationIdentity(EbApplication app)
+        {
+            var root = app.RootObject;
+            var usersAndGroups = app.Folders.UsersAndGroups;
+            var messages = app.Folders.Messages;
+            return new PermissionConfigurationIdentity
+            {
+                Version = Version,
+                RootId = root.ID,
+                RootName = Safe(() => root.Name, ""),
+                UsersAndGroupsId = usersAndGroups.ID,
+                UsersAndGroupsName = Safe(() => usersAndGroups.Name, ""),
+                MessagesId = messages.ID
+            };
+        }
+
+        private static AdapterResponse<PermissionConfigurationIdentity> GetPermissionConfigurationIdentity(EbApplication app)
+        {
+            var identity = ReadPermissionConfigurationIdentity(app);
+            return Ok(identity, "权限配置身份读取成功。");
+        }
+
+        private static PermissionDirectoryNode ReadPermissionDirectoryNode(ObjectItem item, string parentPath)
+        {
+            var path = string.IsNullOrEmpty(parentPath) ? item.Name : parentPath + " / " + item.Name;
+            var node = new PermissionDirectoryNode
+            {
+                Id = item.ID,
+                Name = item.Name,
+                FullPath = path,
+            };
+            foreach (object raw in item.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child == null) continue;
+                var childNode = ReadPermissionDirectoryNode(child, path);
+                node.Children.Add(childNode);
+            }
+            return node;
+        }
+
+        private static AdapterResponse<PermissionConfigurationStructureResult> GetPermissionConfigurationStructure(EbApplication app)
+        {
+            var identity = ReadPermissionConfigurationIdentity(app);
+            var usersAndGroups = app.Folders.UsersAndGroups;
+            var messages = app.Folders.Messages;
+
+            var result = new PermissionConfigurationStructureResult
+            {
+                Identity = identity,
+            };
+
+            // Left side: recursively read UsersAndGroups directory
+            var leftRoot = ReadPermissionDirectoryNode(usersAndGroups, "");
+            result.LeftNodes.Add(leftRoot);
+
+            // Right side: iterate root children, exclude Messages and UsersAndGroups, keep only one level
+            foreach (object raw in app.RootObject.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child == null) continue;
+                if (child.ID == messages.ID || child.ID == usersAndGroups.ID) continue;
+                result.RightNodes.Add(new PermissionDirectoryNode
+                {
+                    Id = child.ID,
+                    Name = child.Name,
+                    FullPath = child.Name,
+                });
+            }
+
+            return Ok(result, "权限配置结构读取成功。");
         }
 
         private static TypeDefinitionNode ReadTypeDefinitionObject(EbApplication app, ObjectItem item, string parentPath, TypeDefinition definition)
@@ -1663,4 +1738,7 @@ namespace EBAssistant.Adapter
     [DataContract] internal sealed class ApplyTypeDefinitionDialogsRequest { [DataMember] public List<string> TypeItemIds; [DataMember] public List<DialogDefinitionItem> Definitions; }
     [DataContract] internal sealed class TypeDefinitionOperationRecord { [DataMember] public string TypeItemId; [DataMember] public string TypeItemName; [DataMember] public int AttributeId; [DataMember] public string TabName; [DataMember] public string Status; [DataMember] public string Message; }
     [DataContract] internal sealed class ApplyTypeDefinitionDialogsResult { [DataMember] public string Status; [DataMember] public List<TypeDefinitionOperationRecord> Records = new List<TypeDefinitionOperationRecord>(); [DataMember] public List<string> UnprocessedTypeItemIds = new List<string>(); [DataMember] public List<string> UnprocessedOperations = new List<string>(); }
+    [DataContract] internal sealed class PermissionConfigurationIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; [DataMember] public string UsersAndGroupsId; [DataMember] public string UsersAndGroupsName; [DataMember] public string MessagesId; }
+    [DataContract] internal sealed class PermissionDirectoryNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public List<PermissionDirectoryNode> Children = new List<PermissionDirectoryNode>(); }
+    [DataContract] internal sealed class PermissionConfigurationStructureResult { [DataMember] public PermissionConfigurationIdentity Identity; [DataMember] public List<PermissionDirectoryNode> LeftNodes = new List<PermissionDirectoryNode>(); [DataMember] public List<PermissionDirectoryNode> RightNodes = new List<PermissionDirectoryNode>(); }
 }

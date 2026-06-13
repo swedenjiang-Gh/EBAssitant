@@ -183,3 +183,27 @@ public sealed class ApplyTypeDefinitionDialogsResult
     public List<string> UnprocessedTypeItemIds { get; set; } = [];
     public List<string> UnprocessedOperations { get; set; } = [];
 }
+public sealed class PermissionConfigurationIdentity
+{
+    public string Version { get; set; } = "";
+    public string RootId { get; set; } = "";
+    public string RootName { get; set; } = "";
+    public string UsersAndGroupsId { get; set; } = "";
+    public string UsersAndGroupsName { get; set; } = "";
+    public string MessagesId { get; set; } = "";
+}
+
+public sealed class PermissionDirectoryNode
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string FullPath { get; set; } = "";
+    public List<PermissionDirectoryNode> Children { get; set; } = [];
+}
+
+public sealed class PermissionConfigurationStructureResult
+{
+    public PermissionConfigurationIdentity Identity { get; set; } = new();
+    public List<PermissionDirectoryNode> LeftNodes { get; set; } = [];
+    public List<PermissionDirectoryNode> RightNodes { get; set; } = [];
+}
