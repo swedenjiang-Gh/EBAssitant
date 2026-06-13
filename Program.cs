@@ -7,12 +7,6 @@ internal static class Program
     {
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
         ApplicationConfiguration.Initialize();
-        var licensePath = Path.Combine(AppContext.BaseDirectory, "EBAssistant.ealic");
-        var validation = AuthorizationCrypto.ValidateLicenseFile(
-            licensePath,
-            AuthorizationMachineInfo.ComputerName,
-            AuthorizationMachineInfo.GetMacAddresses(),
-            DateTime.Today);
-        Application.Run(new MainForm(validation));
+        Application.Run(new MainForm());
     }
 }

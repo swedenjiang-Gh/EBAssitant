@@ -11,14 +11,10 @@ public sealed class MainForm : Form
     ];
 
     private readonly Label _statusLabel;
-    private readonly AuthorizationValidationResult _authorization;
     private readonly List<Form> _openWindows = [];
-    private int _aboutClickCount;
-    private DateTime _lastAboutClickUtc = DateTime.MinValue;
 
-    public MainForm(AuthorizationValidationResult? authorization = null)
+    public MainForm()
     {
-        _authorization = authorization ?? AuthorizationValidationResult.Ok("授权有效。");
         Text = "EB Assistant";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(720, 480);
@@ -76,8 +72,8 @@ public sealed class MainForm : Form
         _statusLabel = new Label
         {
             AutoSize = true,
-            Text = _authorization.IsValid ? "就绪" : $"未授权：{_authorization.Message}",
-            ForeColor = _authorization.IsValid ? Color.FromArgb(100, 112, 128) : Color.FromArgb(192, 72, 72),
+            Text = "就绪",
+            ForeColor = Color.FromArgb(100, 112, 128),
             Margin = new Padding(0, 24, 0, 0)
         };
 
@@ -110,7 +106,6 @@ public sealed class MainForm : Form
         fileMenu.DropDownItems.Add(downloadTemplateItem);
 
         var aboutMenu = new ToolStripMenuItem("关于");
-        aboutMenu.MouseDown += (_, _) => RegisterAboutMenuClick();
         var helpItem = new ToolStripMenuItem("帮助");
         helpItem.Click += (_, _) => OpenHelpManual();
         var versionItem = new ToolStripMenuItem("版本信息");
@@ -121,34 +116,6 @@ public sealed class MainForm : Form
         menuStrip.Items.Add(fileMenu);
         menuStrip.Items.Add(aboutMenu);
         return menuStrip;
-    }
-
-    private void RegisterAboutMenuClick()
-    {
-        var now = DateTime.UtcNow;
-        _aboutClickCount = (now - _lastAboutClickUtc).TotalSeconds > 3 ? 1 : _aboutClickCount + 1;
-        _lastAboutClickUtc = now;
-
-        if (_aboutClickCount < 5) return;
-        _aboutClickCount = 0;
-        BeginInvoke(ShowAuthorizationPasswordPrompt);
-    }
-
-    private void ShowAuthorizationPasswordPrompt()
-    {
-        using var prompt = new PasswordPromptForm();
-        if (prompt.ShowDialog(this) != DialogResult.OK) return;
-
-        if (!AuthorizationCrypto.VerifyManagerPassword(prompt.Password))
-        {
-            MessageBox.Show(this, "密码错误。", "授权管理器", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            return;
-        }
-
-        var form = new AuthorizationManagerForm();
-        _openWindows.Add(form);
-        form.FormClosed += (_, _) => _openWindows.Remove(form);
-        form.Show(this);
     }
 
     private void DownloadExcelTemplates()
@@ -247,7 +214,6 @@ public sealed class MainForm : Form
         };
         button.FlatAppearance.BorderColor = Color.FromArgb(218, 224, 232);
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(235, 242, 255);
-        button.Enabled = _authorization.IsValid;
         button.Click += (_, _) => OpenFunction(functionName);
         return button;
     }

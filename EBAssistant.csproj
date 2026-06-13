@@ -9,11 +9,9 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="ExcelDataReader" Version="3.7.0" />
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="9.0.0" />
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="Adapters\**\*.cs" />
-    <Compile Remove="AuthorizationManager\**\*.cs" />
     <Compile Remove="Tests\**\*.cs" />
   </ItemGroup>
   <ItemGroup>
