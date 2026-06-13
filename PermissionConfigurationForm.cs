@@ -6,9 +6,10 @@ public sealed class PermissionConfigurationForm : Form
 {
     private readonly SplitContainer _split = new() { Dock = DockStyle.Fill, SplitterDistance = 380 };
     private readonly TreeView _usersTree = new() { Dock = DockStyle.Fill, CheckBoxes = true, HideSelection = false, ShowNodeToolTips = true };
-    private readonly TreeView _directoriesTree = new() { Dock = DockStyle.Fill, HideSelection = false, ShowNodeToolTips = true };
+    private readonly TreeView _directoriesTree = new() { Dock = DockStyle.Fill, CheckBoxes = true, HideSelection = false, ShowNodeToolTips = true };
     private readonly Button _refresh = new() { Text = "刷新", Width = 100, Height = 34 };
     private readonly Button _openLogs = new() { Text = "打开日志目录", Width = 130, Height = 34 };
+    private readonly Button _apply = new() { Text = "应用权限配置", Width = 130, Height = 34, Enabled = false };
     private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 34, Padding = new Padding(8) };
     private readonly ContextMenuStrip _directoryMenu = new();
     private EbAdapterClient? _client;
@@ -39,6 +40,7 @@ public sealed class PermissionConfigurationForm : Form
             FlowDirection = FlowDirection.LeftToRight
         };
         leftToolbar.Controls.Add(_refresh);
+        leftToolbar.Controls.Add(_apply);
         leftToolbar.Controls.Add(_openLogs);
 
         var leftPanel = new Panel { Dock = DockStyle.Fill };
@@ -66,7 +68,9 @@ public sealed class PermissionConfigurationForm : Form
         Controls.Add(_status);
 
         _usersTree.AfterCheck += UsersTreeAfterCheck;
+        _directoriesTree.AfterCheck += UsersTreeAfterCheck;
         _refresh.Click += async (_, _) => await LoadFromEbAsync();
+        _apply.Click += async (_, _) => await ApplyPermissionAssignmentAsync();
         _openLogs.Click += (_, _) =>
         {
             try
@@ -213,6 +217,7 @@ public sealed class PermissionConfigurationForm : Form
         _directoriesTree.EndUpdate();
         _usersTree.CollapseAll();
         _directoriesTree.CollapseAll();
+        UpdateApplyState();
     }
 
     private static TreeNode ToTreeNode(PermissionDirectoryNode item)
@@ -272,10 +277,13 @@ public sealed class PermissionConfigurationForm : Form
         if (_updatingChecks || e.Node is null) return;
         _updatingChecks = true;
 
-        SetChildrenChecked(e.Node, e.Node.Checked);
+        var selectedMember = e.Node.Tag as PermissionDirectoryNode;
+        if (selectedMember?.IsSelectableMember != true)
+            SetChildrenChecked(e.Node, e.Node.Checked);
         UpdateParents(e.Node);
 
         _updatingChecks = false;
+        UpdateApplyState();
     }
 
     private static void SetChildrenChecked(TreeNode node, bool checkedState)
@@ -297,9 +305,80 @@ public sealed class PermissionConfigurationForm : Form
         }
     }
 
+    private async Task ApplyPermissionAssignmentAsync()
+    {
+        if (_client is null || _identity is null) return;
+
+        var selection = PermissionAssignmentSelection.Build(
+            _identity.UsersAndGroupsId,
+            CollectCheckedNodes(_usersTree.Nodes, true),
+            CollectCheckedNodes(_directoriesTree.Nodes, false));
+        if (!selection.CanApply)
+        {
+            MessageBox.Show(this, "请选择至少一个用户或用户组，以及至少一个权限目录。", "权限配置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        using var preview = new PermissionAssignmentPreviewForm(selection);
+        if (preview.ShowDialog(this) != DialogResult.OK) return;
+
+        SetBusy(true);
+        _status.Text = $"正在添加 {selection.CombinationCount} 项权限成员配置...";
+        var response = await _client.AddPermissionMembersAsync(selection.Request);
+        var result = response.Success && response.Data is not null
+            ? response.Data
+            : PermissionAssignmentResultSummary.FromFailure(selection, response.Message);
+        PermissionAssignmentResultSummary.Apply(result);
+
+        string logDirectory;
+        try
+        {
+            logDirectory = PermissionAssignmentLogWriter.Write(new PermissionAssignmentLog
+            {
+                EbVersion = _identity.Version,
+                Timestamp = DateTime.Now,
+                SetRightCalled = false,
+                RollbackPerformed = false,
+                Result = result
+            });
+        }
+        catch (Exception ex)
+        {
+            logDirectory = PermissionConfigurationLogWriter.GetDirectory();
+            MessageBox.Show(this, $"写入日志失败：{ex.Message}", "权限配置", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+
+        SetBusy(false);
+        _status.Text = $"权限配置完成：新增 {result.AddedCount}，已存在跳过 {result.SkippedCount}，失败 {result.FailedCount}。";
+        new PermissionAssignmentResultForm(result, logDirectory).Show(this);
+        await LoadFromEbAsync();
+    }
+
+    private static List<PermissionDirectoryNode> CollectCheckedNodes(TreeNodeCollection nodes, bool leavesOnly)
+    {
+        var result = new List<PermissionDirectoryNode>();
+        foreach (TreeNode node in nodes)
+        {
+            if (node.Checked &&
+                (!leavesOnly || (node.Tag is PermissionDirectoryNode member && member.IsSelectableMember)) &&
+                node.Tag is PermissionDirectoryNode item)
+                result.Add(item);
+            result.AddRange(CollectCheckedNodes(node.Nodes, leavesOnly));
+        }
+        return result;
+    }
+
+    private void UpdateApplyState()
+    {
+        _apply.Enabled =
+            CollectCheckedNodes(_usersTree.Nodes, true).Count > 0 &&
+            CollectCheckedNodes(_directoriesTree.Nodes, false).Count > 0;
+    }
+
     private void SetBusy(bool busy)
     {
-        _usersTree.Enabled = _directoriesTree.Enabled = _refresh.Enabled = !busy;
+        _usersTree.Enabled = _directoriesTree.Enabled = _refresh.Enabled = _apply.Enabled = !busy;
+        if (!busy) UpdateApplyState();
         UseWaitCursor = busy;
     }
 }

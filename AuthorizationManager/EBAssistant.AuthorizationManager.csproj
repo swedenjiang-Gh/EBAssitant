@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x86</PlatformTarget>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>EBAssistant.AuthorizationManager</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\AuthorizationCrypto.cs" Link="AuthorizationCrypto.cs" />
+    <Compile Include="..\AuthorizationMachineInfo.cs" Link="AuthorizationMachineInfo.cs" />
+    <Compile Include="..\AuthorizationManagerForm.cs" Link="AuthorizationManagerForm.cs" />
+    <Compile Include="..\PasswordPromptForm.cs" Link="PasswordPromptForm.cs" />
+  </ItemGroup>
+</Project>

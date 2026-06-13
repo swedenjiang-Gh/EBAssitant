@@ -49,6 +49,7 @@ namespace EBAssistant.Adapter
                 if (operation == "GetProjectTemplateTree") return Write(GetProjectTemplateTree(app));
                 if (operation == "GetPermissionConfigurationIdentity") return Write(GetPermissionConfigurationIdentity(app));
                 if (operation == "GetPermissionConfigurationStructure") return Write(GetPermissionConfigurationStructure(app));
+                if (operation == "AddPermissionMembers") return Write(AddPermissionMembers(app, Read<PermissionMemberAssignmentRequest>()));
                 if (operation == "ValidateWorksheetAttributeIds") return Write(ValidateWorksheetAttributeIds(app, Read<ValidateWorksheetAttributeIdsRequest>()));
                 if (operation == "GetWorksheetCreationContext") return Write(GetWorksheetCreationContext(app, Read<WorksheetCreationContextRequest>()));
                 if (operation == "ValidateWorksheetCreationCapability") return Write(ValidateWorksheetCreationCapability(app, Read<ValidateWorksheetCreationCapabilityRequest>()));
@@ -518,6 +519,10 @@ namespace EBAssistant.Adapter
                 Id = item.ID,
                 Name = item.Name,
                 FullPath = path,
+                IsSelectableMember =
+                    item.Kind == AucObjectKind.aucObjUser ||
+                    item.Kind == AucObjectKind.aucObjUserGroup ||
+                    item.Kind == AucObjectKind.aucObjAllEngineeringBaseUsersGroup,
             };
             IEnumerable children;
             try
@@ -569,6 +574,212 @@ namespace EBAssistant.Adapter
             }
 
             return Ok(result, "权限配置结构读取成功。");
+        }
+
+        private static AdapterResponse<PermissionMemberAssignmentResult> AddPermissionMembers(
+            EbApplication app,
+            PermissionMemberAssignmentRequest request)
+        {
+            var memberIds = DistinctNonEmpty(request == null ? null : request.MemberIds);
+            var directoryIds = DistinctNonEmpty(request == null ? null : request.DirectoryIds);
+            if (memberIds.Count == 0 || directoryIds.Count == 0)
+                return Fail<PermissionMemberAssignmentResult>("必须至少选择一个用户或用户组，并至少选择一个权限目录。");
+
+            var identity = ReadPermissionConfigurationIdentity(app);
+            var members = memberIds.Select(id => ResolvePermissionMember(app, id)).ToList();
+            var directories = directoryIds.Select(id => ResolvePermissionDirectory(app, identity, id)).ToList();
+            var result = new PermissionMemberAssignmentResult();
+
+            foreach (var member in members)
+            {
+                foreach (var directory in directories)
+                {
+                    var record = new PermissionMemberAssignmentRecord
+                    {
+                        MemberId = member.Id,
+                        MemberName = member.Name,
+                        DirectoryId = directory.Id,
+                        DirectoryName = directory.Name,
+                    };
+
+                    if (!string.IsNullOrEmpty(member.Error))
+                    {
+                        record.Status = "failed";
+                        record.Message = member.Error;
+                    }
+                    else if (!string.IsNullOrEmpty(directory.Error))
+                    {
+                        record.Status = "failed";
+                        record.Message = directory.Error;
+                    }
+                    else
+                    {
+                        try
+                        {
+                            var permissions = GetAccessPermissions(directory.Object);
+                            if (ContainsPermissionSid(permissions, member.Sid))
+                            {
+                                record.Status = "skipped_existing";
+                                record.Message = "该用户或用户组已存在于权限目录中。";
+                            }
+                            else
+                            {
+                                if (member.Group != null) permissions.AddGroup(member.Group);
+                                else permissions.Add(member.User);
+
+                                var readback = app.Utils.GetSnglObjectByID(directory.Id) as ObjectItem;
+                                if (readback == null || !ContainsPermissionSid(GetAccessPermissions(readback), member.Sid))
+                                    throw new InvalidOperationException("添加后读回未找到该用户或用户组。");
+
+                                record.Status = "added";
+                                record.Message = "已添加并读回确认；未调用 SetRight。";
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            record.Status = "failed";
+                            record.Message = Describe(ex);
+                        }
+                    }
+                    result.Records.Add(record);
+                }
+            }
+
+            ApplyPermissionAssignmentSummary(result);
+            return Ok(result, result.FailedCount == 0 ? "权限成员添加完成。" : "权限成员添加完成，但部分项目失败。");
+        }
+
+        private static List<string> DistinctNonEmpty(IEnumerable<string> values)
+        {
+            return (values ?? Enumerable.Empty<string>())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static ResolvedPermissionMember ResolvePermissionMember(EbApplication app, string id)
+        {
+            var resolved = new ResolvedPermissionMember { Id = id };
+            try
+            {
+                var item = app.Utils.GetSnglObjectByID(id) as ObjectItem;
+                if (item == null) throw new InvalidOperationException("无法按 ID 找到用户或用户组。");
+                resolved.Name = item.Name;
+
+                var userObject = item as User;
+                if (userObject != null)
+                {
+                    resolved.User = FindAccessControlUserBySid(app.AccessControl.WinUsersAndGroups, userObject.UserSID);
+                    if (resolved.User == null) throw new InvalidOperationException("无法在 AccessControl.WinUsersAndGroups 中匹配用户 SID。");
+                    resolved.Sid = resolved.User.SID;
+                    if (string.IsNullOrWhiteSpace(resolved.Sid)) throw new InvalidOperationException("用户 SID 为空。");
+                    return resolved;
+                }
+
+                if (item.Kind != AucObjectKind.aucObjUserGroup &&
+                    item.Kind != AucObjectKind.aucObjAllEngineeringBaseUsersGroup)
+                    throw new InvalidOperationException("所选对象不是用户或用户组。");
+
+                var matches = new List<AccessControlGroup>();
+                foreach (object raw in app.AccessControl.Groups as IEnumerable)
+                {
+                    var group = raw as AccessControlGroup;
+                    if (group != null && string.Equals(group.Name, item.Name, StringComparison.OrdinalIgnoreCase))
+                        matches.Add(group);
+                }
+                if (matches.Count != 1) throw new InvalidOperationException("无法按唯一名称匹配 EB 用户组。");
+
+                resolved.Group = matches[0];
+                resolved.Sid = matches[0].SID;
+                if (string.IsNullOrWhiteSpace(resolved.Sid)) throw new InvalidOperationException("用户组 SID 为空。");
+            }
+            catch (Exception ex)
+            {
+                resolved.Error = Describe(ex);
+            }
+            return resolved;
+        }
+
+        private static AccessControlUser FindAccessControlUserBySid(AccessControlUsers users, string sid)
+        {
+            foreach (object raw in users as IEnumerable)
+            {
+                var user = raw as AccessControlUser;
+                if (user != null && string.Equals(user.SID, sid, StringComparison.OrdinalIgnoreCase)) return user;
+            }
+            return null;
+        }
+
+        private static ResolvedPermissionDirectory ResolvePermissionDirectory(
+            EbApplication app,
+            PermissionConfigurationIdentity identity,
+            string id)
+        {
+            var resolved = new ResolvedPermissionDirectory { Id = id };
+            try
+            {
+                var item = app.Utils.GetSnglObjectByID(id) as ObjectItem;
+                if (item == null) throw new InvalidOperationException("无法按 ID 找到权限目录。");
+                resolved.Name = item.Name;
+                if (item.Parent == null || !string.Equals(item.Parent.ID, identity.RootId, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("只允许选择 EB 根目录的直接子目录。");
+                if (string.Equals(id, identity.UsersAndGroupsId, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(id, identity.MessagesId, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("该根目录不允许配置权限成员。");
+                GetAccessPermissions(item);
+                resolved.Object = item;
+            }
+            catch (Exception ex)
+            {
+                resolved.Error = Describe(ex);
+            }
+            return resolved;
+        }
+
+        private static AccessControlUsers GetAccessPermissions(ObjectItem item)
+        {
+            var projects = item as IAucProjectsFolder;
+            if (projects != null) return projects.AccessPermissions;
+            var typeDefinitions = item as IAucVbaTypeDefinitionsFolder;
+            if (typeDefinitions != null) return typeDefinitions.AccessPermissions;
+            var attributes = item as IAucVbaAttributesFolder;
+            if (attributes != null) return attributes.AccessPermissions;
+            var projectTemplates = item as IAucVbaProjectTemplatesFolder;
+            if (projectTemplates != null) return projectTemplates.AccessPermissions;
+            var stencils = item as IAucVbaStencils;
+            if (stencils != null) return stencils.AccessPermissions;
+            var macros = item as IAucVbaMacrosFolder;
+            if (macros != null) return macros.AccessPermissions;
+            var catalogs = item as IAucVbaCatalogsFolder;
+            if (catalogs != null) return catalogs.AccessPermissions;
+            var dictionaries = item as IAucVbaDictionariesFolder;
+            if (dictionaries != null) return dictionaries.AccessPermissions;
+            var templates = item as IAucVbaTemplatesFolder;
+            if (templates != null) return templates.AccessPermissions;
+            var addInTemplates = item as IAucVbaAddInTemplatesFolder;
+            if (addInTemplates != null) return addInTemplates.AccessPermissions;
+            var folderForProjects = item as IAucFolderForProjects;
+            if (folderForProjects != null) return folderForProjects.AccessPermissions;
+            throw new InvalidOperationException("该目录类型不公开 AccessPermissions。");
+        }
+
+        private static bool ContainsPermissionSid(AccessControlUsers permissions, string sid)
+        {
+            foreach (object raw in permissions as IEnumerable)
+            {
+                var user = raw as AccessControlUser;
+                if (user != null && string.Equals(user.SID, sid, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        private static void ApplyPermissionAssignmentSummary(PermissionMemberAssignmentResult result)
+        {
+            result.TotalCount = result.Records.Count;
+            result.AddedCount = result.Records.Count(record => record.Status == "added");
+            result.SkippedCount = result.Records.Count(record => record.Status == "skipped_existing");
+            result.FailedCount = result.TotalCount - result.AddedCount - result.SkippedCount;
+            result.Status = result.FailedCount == 0 ? "completed" : "completed_with_failures";
         }
 
         private static TypeDefinitionNode ReadTypeDefinitionObject(EbApplication app, ObjectItem item, string parentPath, TypeDefinition definition)
@@ -1760,6 +1971,11 @@ namespace EBAssistant.Adapter
     [DataContract] internal sealed class TypeDefinitionOperationRecord { [DataMember] public string TypeItemId; [DataMember] public string TypeItemName; [DataMember] public int AttributeId; [DataMember] public string TabName; [DataMember] public string Status; [DataMember] public string Message; }
     [DataContract] internal sealed class ApplyTypeDefinitionDialogsResult { [DataMember] public string Status; [DataMember] public List<TypeDefinitionOperationRecord> Records = new List<TypeDefinitionOperationRecord>(); [DataMember] public List<string> UnprocessedTypeItemIds = new List<string>(); [DataMember] public List<string> UnprocessedOperations = new List<string>(); }
     [DataContract] internal sealed class PermissionConfigurationIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; [DataMember] public string UsersAndGroupsId; [DataMember] public string UsersAndGroupsName; [DataMember] public string MessagesId; }
-    [DataContract] internal sealed class PermissionDirectoryNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public List<PermissionDirectoryNode> Children = new List<PermissionDirectoryNode>(); }
+    [DataContract] internal sealed class PermissionDirectoryNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public bool IsSelectableMember; [DataMember] public List<PermissionDirectoryNode> Children = new List<PermissionDirectoryNode>(); }
     [DataContract] internal sealed class PermissionConfigurationStructureResult { [DataMember] public PermissionConfigurationIdentity Identity; [DataMember] public List<PermissionDirectoryNode> LeftNodes = new List<PermissionDirectoryNode>(); [DataMember] public List<PermissionDirectoryNode> RightNodes = new List<PermissionDirectoryNode>(); }
+    [DataContract] internal sealed class PermissionMemberAssignmentRequest { [DataMember] public List<string> MemberIds = new List<string>(); [DataMember] public List<string> DirectoryIds = new List<string>(); }
+    [DataContract] internal sealed class PermissionMemberAssignmentResult { [DataMember] public string Status; [DataMember] public int TotalCount; [DataMember] public int AddedCount; [DataMember] public int SkippedCount; [DataMember] public int FailedCount; [DataMember] public List<PermissionMemberAssignmentRecord> Records = new List<PermissionMemberAssignmentRecord>(); }
+    [DataContract] internal sealed class PermissionMemberAssignmentRecord { [DataMember] public string MemberId; [DataMember] public string MemberName; [DataMember] public string DirectoryId; [DataMember] public string DirectoryName; [DataMember] public string Status; [DataMember] public string Message; }
+    internal sealed class ResolvedPermissionMember { public string Id; public string Name; public string Sid; public AccessControlUser User; public AccessControlGroup Group; public string Error; }
+    internal sealed class ResolvedPermissionDirectory { public string Id; public string Name; public ObjectItem Object; public string Error; }
 }

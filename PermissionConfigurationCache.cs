@@ -4,7 +4,7 @@ namespace EBAssistant;
 
 public static class PermissionConfigurationCache
 {
-    private const int ProtocolVersion = 1;
+    private const int ProtocolVersion = 2;
     private static readonly JsonSerializerOptions Options = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
 
     public static PermissionConfigurationStructureResult? Load(PermissionConfigurationIdentity identity)

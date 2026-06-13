@@ -13,7 +13,8 @@ internal static class Program
             WorksheetPreparationTests.Run();
             PermissionAssignmentSelectionTests.Run();
             PermissionAssignmentResultTests.Run();
-            Console.WriteLine("PASS: 7 test groups");
+            AuthorizationCryptoTests.Run();
+            Console.WriteLine("PASS: 8 test groups");
             return 0;
         }
         catch (Exception exception)

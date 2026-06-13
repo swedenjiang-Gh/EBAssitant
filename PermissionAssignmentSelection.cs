@@ -18,6 +18,7 @@ public static class PermissionAssignmentSelection
     {
         var members = DistinctById(
             selectedMembers.Where(node =>
+                node.IsSelectableMember &&
                 !string.Equals(node.Id, usersAndGroupsRootId, StringComparison.OrdinalIgnoreCase)));
         var directories = DistinctById(selectedDirectories);
 

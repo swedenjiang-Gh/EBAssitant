@@ -2,17 +2,31 @@ namespace EBAssistant;
 
 public sealed class MainForm : Form
 {
-    private readonly Label _statusLabel;
-    private readonly List<Form> _openWindows = [];
+    private static readonly string[] ExcelTemplateNames =
+    [
+        "创建属性模板.xlsx",
+        "类型定义模板.xlsx",
+        "工作表模板.xlsx",
+        "权限配置模板.xlsx"
+    ];
 
-    public MainForm()
+    private readonly Label _statusLabel;
+    private readonly AuthorizationValidationResult _authorization;
+    private readonly List<Form> _openWindows = [];
+    private int _aboutClickCount;
+    private DateTime _lastAboutClickUtc = DateTime.MinValue;
+
+    public MainForm(AuthorizationValidationResult? authorization = null)
     {
+        _authorization = authorization ?? AuthorizationValidationResult.Ok("授权有效。");
         Text = "EB Assistant";
         StartPosition = FormStartPosition.CenterScreen;
         MinimumSize = new Size(720, 480);
         Size = new Size(900, 560);
         BackColor = Color.FromArgb(245, 247, 250);
         Font = new Font("Microsoft YaHei UI", 10F);
+
+        var menuStrip = CreateMainMenu();
 
         var titleLabel = new Label
         {
@@ -62,8 +76,8 @@ public sealed class MainForm : Form
         _statusLabel = new Label
         {
             AutoSize = true,
-            Text = "就绪",
-            ForeColor = Color.FromArgb(100, 112, 128),
+            Text = _authorization.IsValid ? "就绪" : $"未授权：{_authorization.Message}",
+            ForeColor = _authorization.IsValid ? Color.FromArgb(100, 112, 128) : Color.FromArgb(192, 72, 72),
             Margin = new Padding(0, 24, 0, 0)
         };
 
@@ -82,6 +96,140 @@ public sealed class MainForm : Form
         content.Controls.Add(_statusLabel);
 
         Controls.Add(content);
+        Controls.Add(menuStrip);
+        MainMenuStrip = menuStrip;
+    }
+
+    private MenuStrip CreateMainMenu()
+    {
+        var menuStrip = new MenuStrip { Dock = DockStyle.Top };
+
+        var fileMenu = new ToolStripMenuItem("文件");
+        var downloadTemplateItem = new ToolStripMenuItem("下载模板");
+        downloadTemplateItem.Click += (_, _) => DownloadExcelTemplates();
+        fileMenu.DropDownItems.Add(downloadTemplateItem);
+
+        var aboutMenu = new ToolStripMenuItem("关于");
+        aboutMenu.MouseDown += (_, _) => RegisterAboutMenuClick();
+        var helpItem = new ToolStripMenuItem("帮助");
+        helpItem.Click += (_, _) => OpenHelpManual();
+        var versionItem = new ToolStripMenuItem("版本信息");
+        versionItem.Click += (_, _) => ShowVersionInfo();
+        aboutMenu.DropDownItems.Add(helpItem);
+        aboutMenu.DropDownItems.Add(versionItem);
+
+        menuStrip.Items.Add(fileMenu);
+        menuStrip.Items.Add(aboutMenu);
+        return menuStrip;
+    }
+
+    private void RegisterAboutMenuClick()
+    {
+        var now = DateTime.UtcNow;
+        _aboutClickCount = (now - _lastAboutClickUtc).TotalSeconds > 3 ? 1 : _aboutClickCount + 1;
+        _lastAboutClickUtc = now;
+
+        if (_aboutClickCount < 5) return;
+        _aboutClickCount = 0;
+        BeginInvoke(ShowAuthorizationPasswordPrompt);
+    }
+
+    private void ShowAuthorizationPasswordPrompt()
+    {
+        using var prompt = new PasswordPromptForm();
+        if (prompt.ShowDialog(this) != DialogResult.OK) return;
+
+        if (!AuthorizationCrypto.VerifyManagerPassword(prompt.Password))
+        {
+            MessageBox.Show(this, "密码错误。", "授权管理器", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var form = new AuthorizationManagerForm();
+        _openWindows.Add(form);
+        form.FormClosed += (_, _) => _openWindows.Remove(form);
+        form.Show(this);
+    }
+
+    private void DownloadExcelTemplates()
+    {
+        var missing = ExcelTemplateNames
+            .Where(name => !File.Exists(GetTemplatePath(name)))
+            .ToList();
+        if (missing.Count > 0)
+        {
+            MessageBox.Show(this, $"模板文件缺失：{string.Join("、", missing)}", "下载模板", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "请选择模板保存目录",
+            UseDescriptionForTitle = true
+        };
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+
+        var existing = ExcelTemplateNames
+            .Where(name => File.Exists(Path.Combine(dialog.SelectedPath, name)))
+            .ToList();
+        var overwrite = false;
+        if (existing.Count > 0)
+        {
+            var choice = MessageBox.Show(
+                this,
+                $"目标目录已存在：{string.Join("、", existing)}\r\n是否覆盖这些文件？",
+                "下载模板",
+                MessageBoxButtons.YesNoCancel,
+                MessageBoxIcon.Question);
+            if (choice == DialogResult.Cancel) return;
+            overwrite = choice == DialogResult.Yes;
+        }
+
+        var copied = new List<string>();
+        foreach (var name in ExcelTemplateNames)
+        {
+            var target = Path.Combine(dialog.SelectedPath, name);
+            if (File.Exists(target) && !overwrite) continue;
+            File.Copy(GetTemplatePath(name), target, overwrite);
+            copied.Add(name);
+        }
+
+        _statusLabel.Text = $"已下载模板：{copied.Count} 个";
+        MessageBox.Show(this, $"已保存 {copied.Count} 个模板到：\r\n{dialog.SelectedPath}", "下载模板", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private void OpenHelpManual()
+    {
+        var path = GetTemplatePath("帮助手册.pdf");
+        if (!File.Exists(path))
+        {
+            MessageBox.Show(this, "未找到帮助手册.pdf。", "帮助", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = path,
+            UseShellExecute = true
+        });
+    }
+
+    private void ShowVersionInfo()
+    {
+        var path = GetTemplatePath("版本信息.txt");
+        if (!File.Exists(path))
+        {
+            MessageBox.Show(this, "未找到版本信息.txt。", "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return;
+        }
+
+        var text = File.ReadAllText(path, System.Text.Encoding.UTF8);
+        MessageBox.Show(this, text, "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Information);
+    }
+
+    private static string GetTemplatePath(string fileName)
+    {
+        return Path.Combine(AppContext.BaseDirectory, "Templates", fileName);
     }
 
     private Button CreateFunctionButton(string functionName)
@@ -99,6 +247,7 @@ public sealed class MainForm : Form
         };
         button.FlatAppearance.BorderColor = Color.FromArgb(218, 224, 232);
         button.FlatAppearance.MouseOverBackColor = Color.FromArgb(235, 242, 255);
+        button.Enabled = _authorization.IsValid;
         button.Click += (_, _) => OpenFunction(functionName);
         return button;
     }

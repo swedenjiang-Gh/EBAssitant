@@ -74,8 +74,8 @@ internal static class PermissionAssignmentResultTests
         var selection = PermissionAssignmentSelection.Build(
             "ROOT",
             [
-                new PermissionDirectoryNode { Id = "U1", Name = "User 1" },
-                new PermissionDirectoryNode { Id = "G1", Name = "Group 1" }
+                new PermissionDirectoryNode { Id = "U1", Name = "User 1", IsSelectableMember = true },
+                new PermissionDirectoryNode { Id = "G1", Name = "Group 1", IsSelectableMember = true }
             ],
             [
                 new PermissionDirectoryNode { Id = "D1", Name = "Projects" },

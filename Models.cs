@@ -198,6 +198,7 @@ public sealed class PermissionDirectoryNode
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string FullPath { get; set; } = "";
+    public bool IsSelectableMember { get; set; }
     public List<PermissionDirectoryNode> Children { get; set; } = [];
 }
 

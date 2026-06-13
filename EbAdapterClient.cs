@@ -86,6 +86,10 @@ public sealed class EbAdapterClient
 
     public Task<AdapterResponse<PermissionConfigurationStructureResult>> GetPermissionConfigurationStructureAsync() =>
         InvokeAsync<PermissionConfigurationStructureResult>(_adapterPath, "GetPermissionConfigurationStructure", null);
+
+    public Task<AdapterResponse<PermissionMemberAssignmentResult>> AddPermissionMembersAsync(PermissionMemberAssignmentRequest request) =>
+        InvokeAsync<PermissionMemberAssignmentResult>(_adapterPath, "AddPermissionMembers", request);
+
     public Task<AdapterResponse<ValidateWorksheetAttributeIdsResult>> ValidateWorksheetAttributeIdsAsync(IEnumerable<int> ids) =>
         InvokeAsync<ValidateWorksheetAttributeIdsResult>(
             _adapterPath,
