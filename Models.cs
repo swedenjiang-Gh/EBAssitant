@@ -207,3 +207,29 @@ public sealed class PermissionConfigurationStructureResult
     public List<PermissionDirectoryNode> LeftNodes { get; set; } = [];
     public List<PermissionDirectoryNode> RightNodes { get; set; } = [];
 }
+
+public sealed class PermissionMemberAssignmentRequest
+{
+    public List<string> MemberIds { get; set; } = [];
+    public List<string> DirectoryIds { get; set; } = [];
+}
+
+public sealed class PermissionMemberAssignmentResult
+{
+    public string Status { get; set; } = "";
+    public int TotalCount { get; set; }
+    public int AddedCount { get; set; }
+    public int SkippedCount { get; set; }
+    public int FailedCount { get; set; }
+    public List<PermissionMemberAssignmentRecord> Records { get; set; } = [];
+}
+
+public sealed class PermissionMemberAssignmentRecord
+{
+    public string MemberId { get; set; } = "";
+    public string MemberName { get; set; } = "";
+    public string DirectoryId { get; set; } = "";
+    public string DirectoryName { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+}

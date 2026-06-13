@@ -11,7 +11,9 @@ internal static class Program
             WorksheetImportBuilderTests.Run();
             ProjectTemplateCacheTests.Run();
             WorksheetPreparationTests.Run();
-            Console.WriteLine("PASS: 5 test groups");
+            PermissionAssignmentSelectionTests.Run();
+            PermissionAssignmentResultTests.Run();
+            Console.WriteLine("PASS: 7 test groups");
             return 0;
         }
         catch (Exception exception)
