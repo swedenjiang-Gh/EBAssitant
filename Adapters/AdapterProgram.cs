@@ -9,6 +9,8 @@ using System.Runtime.InteropServices.ComTypes;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
 using System.Text;
+using System.Threading;
+using System.Windows.Automation;
 using Aucotec;
 using EbApplication = Aucotec.Application;
 
@@ -47,6 +49,7 @@ namespace EBAssistant.Adapter
                 if (operation == "GetProjectTemplateTree") return Write(GetProjectTemplateTree(app));
                 if (operation == "ValidateWorksheetAttributeIds") return Write(ValidateWorksheetAttributeIds(app, Read<ValidateWorksheetAttributeIdsRequest>()));
                 if (operation == "GetWorksheetCreationContext") return Write(GetWorksheetCreationContext(app, Read<WorksheetCreationContextRequest>()));
+                if (operation == "ValidateWorksheetCreationCapability") return Write(ValidateWorksheetCreationCapability(app, Read<ValidateWorksheetCreationCapabilityRequest>()));
                 if (operation == "ApplyTypeDefinitionDialogs") return Write(ApplyTypeDefinitionDialogs(app, Read<ApplyTypeDefinitionDialogsRequest>()));
                 return Write(Fail<object>("未知操作：" + operation));
             }
@@ -611,23 +614,13 @@ namespace EBAssistant.Adapter
             if (request == null || string.IsNullOrWhiteSpace(request.TemplateProjectId))
                 return Fail<WorksheetCreationContextResult>("模板项目 ID 不能为空。");
 
-            var template = app.Utils.GetSnglObjectByID(request.TemplateProjectId) as ObjectItem;
-            if (template == null || template.Kind != AucObjectKind.aucObjProject)
-                return Fail<WorksheetCreationContextResult>("无法解析模板项目。");
-
-            var worksheetFolders = FindDirectChildrenByName(template.Children as IEnumerable, "工作表");
-            if (worksheetFolders.Count != 1)
-                return Fail<WorksheetCreationContextResult>("模板项目下未找到唯一的 /工作表。");
-
-            var worksheetsFolder = worksheetFolders[0];
-            var favorites = FindDirectChildrenByName(worksheetsFolder.Children as IEnumerable, "收藏");
-            if (favorites.Count != 1)
-                return Fail<WorksheetCreationContextResult>("模板项目下未找到唯一的 /工作表/收藏。");
-
-            var favorite = favorites[0];
-            var templatePath = FindProjectTemplatePath(app.Folders.ProjectTemplates.Children, template.ID, app.Folders.ProjectTemplates.Name);
-            if (string.IsNullOrWhiteSpace(templatePath)) templatePath = app.Folders.ProjectTemplates.Name + " / " + template.Name;
-            var targetPath = templatePath + " / " + worksheetsFolder.Name + " / " + favorite.Name;
+            Project template;
+            ObjectItem favorite;
+            string templatePath;
+            string targetPath;
+            string error;
+            if (!TryResolveWorksheetTarget(app, request.TemplateProjectId, out template, out favorite, out templatePath, out targetPath, out error))
+                return Fail<WorksheetCreationContextResult>(error);
             var result = new WorksheetCreationContextResult
             {
                 TemplateProjectPath = templatePath,
@@ -642,6 +635,126 @@ namespace EBAssistant.Adapter
                 }
             }
             return Ok(result, "工作表创建上下文读取成功。");
+        }
+
+        private static AdapterResponse<ValidateWorksheetCreationCapabilityResult> ValidateWorksheetCreationCapability(
+            EbApplication app,
+            ValidateWorksheetCreationCapabilityRequest request)
+        {
+            var result = new ValidateWorksheetCreationCapabilityResult
+            {
+                TemporaryWorksheetName = "__EBAssistant_WorksheetCapability_" + DateTime.Now.ToString("yyyyMMdd_HHmmss")
+            };
+            if (request == null || request.AttributeIds == null || request.AttributeIds.Count < 2)
+                return FailWithData("能力验证至少需要两个属性 ID。", result);
+
+            Project template;
+            ObjectItem favorite;
+            string templatePath;
+            string targetPath;
+            string error;
+            if (!TryResolveWorksheetTarget(app, request.TemplateProjectId, out template, out favorite, out templatePath, out targetPath, out error))
+                return FailWithData(error, result);
+            result.TargetFolderPath = targetPath;
+            var interactiveProject = template;
+            if (interactiveProject == null) return FailWithData("当前数据库中未找到可用于交互验证的普通项目。", result);
+            var equipmentFolder = interactiveProject.EquipmentFolder;
+            if (equipmentFolder == null) return FailWithData("当前普通项目下未找到设备目录。", result);
+            ObjectItem interactiveFavorite;
+            if (!TryResolveWorksheetFavorite(interactiveProject, out interactiveFavorite, out error))
+                return FailWithData("无法解析交互项目的工作表收藏夹：" + error, result);
+
+            Worksheet worksheet = null;
+            ObjectItem temporaryObject = null;
+            try
+            {
+                worksheet = equipmentFolder.OpenWorksheetDirect(
+                    AucObjectKind.aucObjDevice,
+                    AucAttribute.aucAttrUnspecified,
+                    AucVbFindCondition.aucCondEqual,
+                    "");
+                result.Checks.Add("已打开临时器件工作表。");
+
+                var first = worksheet.Attributes.Add((AucAttribute)request.AttributeIds[0], 0);
+                var second = worksheet.Attributes.Add((AucAttribute)request.AttributeIds[1], 1);
+                first.Width = WorksheetWidth("设备名称");
+                second.Width = WorksheetWidth("这是用于验证自动列宽的较长列标签");
+                worksheet.ProtectColumnWidth = true;
+                result.Checks.Add("已添加两列并设置受保护的自动列宽。");
+
+                worksheet.SaveConfiguration(result.TemporaryWorksheetName, interactiveFavorite);
+                temporaryObject = FindUniqueDirectChildByName(interactiveFavorite.Children as IEnumerable, result.TemporaryWorksheetName);
+                if (temporaryObject == null) throw new InvalidOperationException("保存后无法在交互项目收藏夹中读回临时工作表配置。");
+                result.Checks.Add("临时工作表配置已保存并读回：" + temporaryObject.ID);
+                try { worksheet.Close(); } catch { }
+                ((IAucVbaInternUtils)app).ExecuteCommand(AucCommand.aucCmdSynchronizeTreeToObject, equipmentFolder);
+                Thread.Sleep(500);
+                worksheet = equipmentFolder.OpenWorksheet(temporaryObject.ID, true);
+                if (worksheet == null) throw new InvalidOperationException("无法解析已打开的临时工作表配置。");
+                first = worksheet.Attributes.ItemByID((AucAttribute)request.AttributeIds[0]);
+                second = worksheet.Attributes.ItemByID((AucAttribute)request.AttributeIds[1]);
+                result.Checks.Add("已打开临时工作表配置的交互界面。");
+
+                var processId = FindEbProcessId();
+                if (processId == 0) throw new InvalidOperationException("无法定位 EB 主进程。");
+                result.Checks.Add("已定位 EB 进程：" + processId);
+
+                var sourceObject = equipmentFolder;
+                var widths = new[] { first.Width, second.Width };
+                SetWorksheetColumnLabel(app, sourceObject, processId, 0, request.AttributeIds[0], widths, "设备名称", result.Checks);
+                SetWorksheetColumnLabel(app, sourceObject, processId, 1, request.AttributeIds[1], widths, "这是用于验证自动列宽的较长列标签", result.Checks);
+                if (!string.Equals(first.Name, "设备名称", StringComparison.Ordinal) ||
+                    !string.Equals(second.Name, "这是用于验证自动列宽的较长列标签", StringComparison.Ordinal))
+                    throw new InvalidOperationException("列标签写入后读回不一致。");
+                result.Checks.Add("两列标签写入并读回确认成功。");
+
+                ((IAucVbaInternUtils)app).ExecuteCommand(AucCommand.aucCmdSaveListConfiguration, temporaryObject);
+                result.Checks.Add("列标签修改已保存到临时工作表配置。");
+                if (!string.Equals(interactiveProject.ID, template.ID, StringComparison.OrdinalIgnoreCase) && !temporaryObject.MoveTo(favorite)) throw new InvalidOperationException("无法将临时工作表配置移动到目标模板收藏夹。");
+                temporaryObject.Store();
+                favorite.Store();
+                if (FindUniqueDirectChildByName(favorite.Children as IEnumerable, result.TemporaryWorksheetName) == null)
+                    throw new InvalidOperationException("移动后无法在目标模板收藏夹读回临时工作表配置。");
+                result.Checks.Add("临时工作表配置位于目标模板收藏夹并读回确认。");
+                result.Passed = true;
+                return Ok(result, "工作表创建能力验证通过。");
+            }
+            catch (Exception ex)
+            {
+                result.Passed = false;
+                result.Checks.Add("验证失败：" + Describe(ex));
+                return FailWithData("工作表创建能力验证失败：" + Describe(ex), result);
+            }
+            finally
+            {
+                if (worksheet != null)
+                {
+                    try { worksheet.Close(); result.CleanupChecks.Add("临时工作表已关闭。"); }
+                    catch (Exception ex) { result.CleanupChecks.Add("关闭临时工作表失败：" + Describe(ex)); result.Passed = false; }
+                }
+                if (temporaryObject == null)
+                    temporaryObject = FindUniqueDirectChildByNameSafe(favorite, result.TemporaryWorksheetName);
+                if (temporaryObject != null)
+                {
+                    try
+                    {
+                        var id = temporaryObject.ID;
+                        if (!temporaryObject.Delete(false, AucDeleteType.aucDeleteTStandard))
+                            throw new InvalidOperationException("EB 未删除临时工作表配置。");
+                        favorite.Store();
+                        result.CleanupChecks.Add("临时工作表配置已删除：" + id);
+                    }
+                    catch (Exception ex)
+                    {
+                        result.CleanupChecks.Add("删除临时工作表配置失败：" + Describe(ex));
+                        result.Passed = false;
+                    }
+                }
+                else
+                {
+                    result.CleanupChecks.Add("未发现需要删除的临时工作表配置。");
+                }
+            }
         }
 
         private static void CollectAttributeDefinitionIds(IEnumerable children, HashSet<int> requested, HashSet<int> existing)
@@ -755,6 +868,485 @@ namespace EBAssistant.Adapter
             return result;
         }
 
+        private static List<ObjectItem> FindDirectChildrenByKind(IEnumerable children, AucObjectKind kind)
+        {
+            var result = new List<ObjectItem>();
+            foreach (object raw in children)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && child.Kind == kind) result.Add(child);
+            }
+            return result;
+        }
+
+        private static bool TryResolveWorksheetTarget(
+            EbApplication app,
+            string templateProjectId,
+            out Project template,
+            out ObjectItem favorite,
+            out string templatePath,
+            out string targetPath,
+            out string error)
+        {
+            template = app.Utils.GetSnglObjectByID(templateProjectId) as Project;
+            favorite = null;
+            templatePath = "";
+            targetPath = "";
+            error = "";
+            if (template == null)
+            {
+                error = "无法解析模板项目。";
+                return false;
+            }
+
+            if (!TryResolveWorksheetFavorite(template, out favorite, out error)) return false;
+            var worksheetsFolder = template.WorksheetTemplatesFolder;
+            templatePath = FindProjectTemplatePath(app.Folders.ProjectTemplates.Children, template.ID, app.Folders.ProjectTemplates.Name);
+            if (string.IsNullOrWhiteSpace(templatePath)) templatePath = app.Folders.ProjectTemplates.Name + " / " + template.Name;
+            targetPath = templatePath + " / " + worksheetsFolder.Name + " / " + favorite.Name;
+            return true;
+        }
+
+        private static bool TryResolveWorksheetFavorite(Project project, out ObjectItem favorite, out string error)
+        {
+            favorite = null;
+            error = "";
+            var worksheetsFolder = project.WorksheetTemplatesFolder;
+            if (worksheetsFolder == null)
+            {
+                error = "项目下未找到 /工作表。";
+                return false;
+            }
+            var favorites = FindDirectChildrenByKind(worksheetsFolder.Children as IEnumerable, AucObjectKind.aucObjFavoriteListConfigurations);
+            if (favorites.Count != 1)
+            {
+                error = "项目下未找到唯一的 /工作表/收藏夹。工作表目录直接子项：" + DescribeDirectChildren(worksheetsFolder.Children as IEnumerable);
+                return false;
+            }
+            favorite = favorites[0];
+            return true;
+        }
+
+        private static Project FindInteractiveProject(EbApplication app, string excludedProjectId)
+        {
+            try
+            {
+                var active = app.ActiveProject;
+                if (active != null && !string.Equals(active.ID, excludedProjectId, StringComparison.OrdinalIgnoreCase))
+                    return active;
+            }
+            catch { }
+            foreach (object raw in app.Folders.Projects.Children as IEnumerable)
+            {
+                var project = raw as Project;
+                if (project != null && !string.Equals(project.ID, excludedProjectId, StringComparison.OrdinalIgnoreCase))
+                    return project;
+            }
+            return null;
+        }
+
+        private static int WorksheetWidth(string label)
+        {
+            var visualUnits = 0;
+            foreach (var character in label ?? "")
+                visualUnits += character <= 0x7f ? 1 : 2;
+            return Math.Max(80, Math.Min(600, visualUnits * 9 + 24));
+        }
+
+        private static int FindEbProcessId()
+        {
+            foreach (var process in Process.GetProcessesByName("EngineeringBase"))
+            {
+                try
+                {
+                    var path = process.MainModule == null ? "" : process.MainModule.FileName;
+                    if (!string.IsNullOrWhiteSpace(path) && path.IndexOf(ExpectedInstallFolder, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return process.Id;
+                }
+                catch { }
+            }
+            return 0;
+        }
+
+        private static void SetWorksheetColumnLabel(
+            EbApplication app,
+            ObjectItem sourceObject,
+            int processId,
+            int position,
+            int attributeId,
+            int[] widths,
+            string label,
+            List<string> checks)
+        {
+            var mainWindow = Process.GetProcessById(processId).MainWindowHandle;
+            if (mainWindow == IntPtr.Zero) throw new InvalidOperationException("EB 主窗口句柄不可用。");
+            SetForegroundWindow(mainWindow);
+            Thread.Sleep(250);
+
+            var header = FindWorksheetHeader(processId, position);
+            if (header != null)
+                SelectAutomationElement(header);
+            else
+                SelectStingGridColumnHeader(app, processId, position, attributeId, widths);
+            checks.Add("已定位并选中第 " + (position + 1) + " 列标题。");
+
+            Exception automationError = null;
+            var completed = false;
+            var worker = new Thread(delegate()
+            {
+                try { completed = HandleEditColumnLabelDialog(processId, label, 10000); }
+                catch (Exception ex) { automationError = ex; }
+            });
+            worker.IsBackground = true;
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.Start();
+
+            ((IAucVbaInternUtils)app).ExecuteCommand(AucCommand.aucCmdEditColumnLabel, sourceObject);
+            worker.Join(12000);
+            if (automationError != null) throw new InvalidOperationException("自动处理“编辑列标签”对话框失败。", automationError);
+            if (!completed) throw new InvalidOperationException("未能在超时内自动完成“编辑列标签”对话框。");
+            checks.Add("第 " + (position + 1) + " 列标签已通过隐藏交互命令写入。");
+        }
+
+        private static AutomationElement FindWorksheetHeader(int processId, int position)
+        {
+            try
+            {
+                var processCondition = new PropertyCondition(AutomationElement.ProcessIdProperty, processId);
+                var typeCondition = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.HeaderItem);
+                var condition = new AndCondition(processCondition, typeCondition);
+                var candidates = AutomationElement.RootElement.FindAll(TreeScope.Descendants, condition)
+                    .Cast<AutomationElement>()
+                    .Where(x => !x.Current.IsOffscreen && x.Current.BoundingRectangle.Width > 0 && x.Current.BoundingRectangle.Height > 0)
+                    .ToList();
+                var group = candidates
+                    .GroupBy(x => Math.Round(x.Current.BoundingRectangle.Top / 4.0) * 4)
+                    .OrderByDescending(x => x.Count())
+                    .ThenByDescending(x => x.Key)
+                    .FirstOrDefault(x => x.Count() > position);
+                return group == null ? null : group.OrderBy(x => x.Current.BoundingRectangle.Left).ElementAt(position);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private static void SelectStingGridColumnHeader(EbApplication app, int processId, int position, int attributeId, int[] widths)
+        {
+            var mainWindow = Process.GetProcessById(processId).MainWindowHandle;
+            var mdiClient = FindChildWindow(mainWindow, "MDIClient", null);
+            var activeChild = mdiClient == IntPtr.Zero
+                ? IntPtr.Zero
+                : SendMessage(mdiClient, 0x0229, IntPtr.Zero, IntPtr.Zero);
+            var grid = activeChild == IntPtr.Zero
+                ? IntPtr.Zero
+                : FindChildWindow(activeChild, "STINGGRIDCAucAxListCtrl", null);
+            if (grid == IntPtr.Zero) grid = FindChildWindow(mainWindow, "STINGGRIDCAucAxListCtrl", null);
+            var rectangle = new NativeRectangle();
+            if (grid == IntPtr.Zero || !GetWindowRect(grid, out rectangle))
+                throw new InvalidOperationException("无法定位 EB 工作表网格。");
+            var precedingWidth = 0;
+            for (var index = 0; index < position; index++) precedingWidth += widths[index];
+            var currentWidth = widths[position];
+            ClickAt(
+                rectangle.Left + 20 + precedingWidth + Math.Max(4, currentWidth / 2),
+                rectangle.Top + 12);
+            Thread.Sleep(100);
+        }
+
+        private static void ClickAt(int x, int y)
+        {
+            SetCursorPos(x, y);
+            mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+            mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+        }
+
+        private static void SelectAutomationElement(AutomationElement element)
+        {
+            object pattern;
+            if (element.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pattern))
+            {
+                ((SelectionItemPattern)pattern).Select();
+                element.SetFocus();
+                return;
+            }
+            element.SetFocus();
+            var point = element.GetClickablePoint();
+            ClickAt((int)point.X, (int)point.Y);
+        }
+
+        private static bool HandleEditColumnLabelDialog(int processId, string label, int timeoutMilliseconds)
+        {
+            var end = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
+            while (DateTime.UtcNow < end)
+            {
+                var dialog = FindEditColumnLabelDialog(processId);
+                if (dialog != null)
+                {
+                    var handle = new IntPtr(dialog.Current.NativeWindowHandle);
+                    if (handle != IntPtr.Zero) ShowWindow(handle, 0);
+                    var edit = dialog.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit));
+                    object pattern;
+                    if (edit != null && edit.TryGetCurrentPattern(ValuePattern.Pattern, out pattern))
+                        ((ValuePattern)pattern).SetValue(label);
+                    else if (!SetDialogEditText(handle, label))
+                        throw new InvalidOperationException("无法定位列标签输入框。");
+
+                    var button = FindConfirmButton(dialog);
+                    if (button != null && button.TryGetCurrentPattern(InvokePattern.Pattern, out pattern))
+                        ((InvokePattern)pattern).Invoke();
+                    else if (!ClickDialogConfirmButton(handle))
+                        throw new InvalidOperationException("无法定位列标签确认按钮。");
+                    return true;
+                }
+                Thread.Sleep(50);
+            }
+            return false;
+        }
+
+        private static AutomationElement FindEditColumnLabelDialog(int processId)
+        {
+            var processCondition = new PropertyCondition(AutomationElement.ProcessIdProperty, processId);
+            var windows = AutomationElement.RootElement.FindAll(TreeScope.Children, processCondition);
+            foreach (AutomationElement window in windows)
+            {
+                var name = window.Current.Name ?? "";
+                if (name.IndexOf("列标签", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    name.IndexOf("Column Label", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return window;
+            }
+            return null;
+        }
+
+        private static AutomationElement FindConfirmButton(AutomationElement dialog)
+        {
+            var buttons = dialog.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
+            foreach (AutomationElement button in buttons)
+            {
+                var name = (button.Current.Name ?? "").Replace("&", "");
+                if (string.Equals(name, "确定", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "OK", StringComparison.OrdinalIgnoreCase))
+                    return button;
+            }
+            return null;
+        }
+
+        private static bool SetDialogEditText(IntPtr dialog, string text)
+        {
+            var edit = FindChildWindow(dialog, "Edit", null);
+            return edit != IntPtr.Zero && SendMessage(edit, 0x000C, IntPtr.Zero, text) != IntPtr.Zero;
+        }
+
+        private static bool ClickDialogConfirmButton(IntPtr dialog)
+        {
+            var button = FindChildWindow(dialog, "Button", "确定");
+            if (button == IntPtr.Zero) button = FindChildWindow(dialog, "Button", "OK");
+            if (button == IntPtr.Zero) return false;
+            SendMessage(button, 0x00F5, IntPtr.Zero, IntPtr.Zero);
+            return true;
+        }
+
+        private static IntPtr FindChildWindow(IntPtr parent, string className, string title)
+        {
+            var result = IntPtr.Zero;
+            EnumChildWindows(parent, delegate(IntPtr handle, IntPtr parameter)
+            {
+                var classBuilder = new StringBuilder(128);
+                GetClassName(handle, classBuilder, classBuilder.Capacity);
+                if (!string.Equals(classBuilder.ToString(), className, StringComparison.OrdinalIgnoreCase)) return true;
+                if (title != null)
+                {
+                    var titleBuilder = new StringBuilder(128);
+                    GetWindowText(handle, titleBuilder, titleBuilder.Capacity);
+                    if (!string.Equals(titleBuilder.ToString().Replace("&", ""), title, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+                result = handle;
+                return false;
+            }, IntPtr.Zero);
+            return result;
+        }
+
+        private static void DoubleClickSelectedExplorerTreeItem(IntPtr mainWindow)
+        {
+            var rectangle = new NativeRectangle();
+            var found = false;
+            foreach (var tree in FindChildWindowsByClassPrefix(mainWindow, "ATL:"))
+            {
+                var accessible = GetAccessibleObject(tree);
+                if (accessible != null && TryFindSelectedAccessibleRectangle(accessible, out rectangle, 0))
+                {
+                    found = true;
+                    break;
+                }
+                if (TryFindSelectionHighlight(tree, out rectangle))
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found && TryFindSelectionHighlight(mainWindow, out rectangle)) found = true;
+            if (!found) throw new InvalidOperationException("无法定位 EB 浏览器树中的已选中对象。");
+            var x = rectangle.Left + Math.Max(4, (rectangle.Right - rectangle.Left) / 2);
+            var y = rectangle.Top + Math.Max(4, (rectangle.Bottom - rectangle.Top) / 2);
+            SetCursorPos(x, y);
+            mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+            mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+            mouse_event(0x0002, 0, 0, 0, UIntPtr.Zero);
+            mouse_event(0x0004, 0, 0, 0, UIntPtr.Zero);
+        }
+
+        private static Accessibility.IAccessible GetAccessibleObject(IntPtr window)
+        {
+            object accessible = null;
+            var iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+            return AccessibleObjectFromWindow(window, 0xFFFFFFFC, ref iid, ref accessible) == 0
+                ? accessible as Accessibility.IAccessible
+                : null;
+        }
+
+        private static bool TryFindSelectedAccessibleRectangle(Accessibility.IAccessible accessible, out NativeRectangle rectangle, int depth)
+        {
+            rectangle = new NativeRectangle();
+            if (accessible == null || depth > 20) return false;
+            for (var index = 0; index <= accessible.accChildCount; index++)
+            {
+                object childId = index == 0 ? 0 : (object)index;
+                try
+                {
+                    var state = Convert.ToInt32(accessible.get_accState(childId));
+                    if ((state & 0x00000006) != 0)
+                    {
+                        int left;
+                        int top;
+                        int width;
+                        int height;
+                        accessible.accLocation(out left, out top, out width, out height, childId);
+                        rectangle = new NativeRectangle { Left = left, Top = top, Right = left + width, Bottom = top + height };
+                        return width > 0 && height > 0;
+                    }
+                    var child = index == 0 ? null : accessible.get_accChild(childId) as Accessibility.IAccessible;
+                    if (child != null && TryFindSelectedAccessibleRectangle(child, out rectangle, depth + 1)) return true;
+                }
+                catch { }
+            }
+            return false;
+        }
+
+        private static bool TryFindSelectionHighlight(IntPtr window, out NativeRectangle rectangle)
+        {
+            rectangle = new NativeRectangle();
+            NativeRectangle windowRectangle;
+            if (!GetWindowRect(window, out windowRectangle)) return false;
+            var width = windowRectangle.Right - windowRectangle.Left;
+            var height = windowRectangle.Bottom - windowRectangle.Top;
+            if (width <= 0 || height <= 0) return false;
+
+            var screenDc = GetDC(IntPtr.Zero);
+            var dc = CreateCompatibleDC(screenDc);
+            var bitmap = CreateCompatibleBitmap(screenDc, width, height);
+            var previous = SelectObject(dc, bitmap);
+            ReleaseDC(IntPtr.Zero, screenDc);
+            if (dc == IntPtr.Zero || bitmap == IntPtr.Zero) return false;
+            try
+            {
+                if (!PrintWindow(window, dc, 2)) return false;
+                var bestY = -1;
+                var bestCount = 0;
+                for (var y = 0; y < height; y += 2)
+                {
+                    var count = 0;
+                    for (var x = 0; x < width; x += 2)
+                    {
+                        if (IsSelectionBlue(GetPixel(dc, x, y))) count++;
+                    }
+                    if (count > bestCount)
+                    {
+                        bestCount = count;
+                        bestY = y;
+                    }
+                }
+                if (bestY < 0 || bestCount < 20) return false;
+
+                var left = width;
+                var right = 0;
+                for (var x = 0; x < width; x++)
+                {
+                    if (!IsSelectionBlue(GetPixel(dc, x, bestY))) continue;
+                    left = Math.Min(left, x);
+                    right = Math.Max(right, x);
+                }
+                if (right <= left) return false;
+                rectangle = new NativeRectangle
+                {
+                    Left = windowRectangle.Left + left,
+                    Top = windowRectangle.Top + Math.Max(0, bestY - 8),
+                    Right = windowRectangle.Left + right,
+                    Bottom = windowRectangle.Top + Math.Min(height, bestY + 8)
+                };
+                return true;
+            }
+            finally
+            {
+                SelectObject(dc, previous);
+                DeleteObject(bitmap);
+                DeleteDC(dc);
+            }
+        }
+
+        private static bool IsSelectionBlue(uint color)
+        {
+            if (color == 0xFFFFFFFF) return false;
+            var red = (int)(color & 0xFF);
+            var green = (int)((color >> 8) & 0xFF);
+            var blue = (int)((color >> 16) & 0xFF);
+            return blue > 140 && blue > red + 70 && blue > green + 35 && green > 50;
+        }
+
+        private static IntPtr FindChildWindowByClassPrefix(IntPtr parent, string prefix)
+        {
+            return FindChildWindowsByClassPrefix(parent, prefix).FirstOrDefault();
+        }
+
+        private static List<IntPtr> FindChildWindowsByClassPrefix(IntPtr parent, string prefix)
+        {
+            var result = new List<IntPtr>();
+            EnumChildWindows(parent, delegate(IntPtr handle, IntPtr parameter)
+            {
+                var classBuilder = new StringBuilder(128);
+                GetClassName(handle, classBuilder, classBuilder.Capacity);
+                if (classBuilder.ToString().StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && IsWindowVisible(handle))
+                {
+                    result.Add(handle);
+                }
+                return true;
+            }, IntPtr.Zero);
+            return result;
+        }
+
+        private static ObjectItem FindUniqueDirectChildByName(IEnumerable children, string name)
+        {
+            var matches = FindDirectChildrenByName(children, name);
+            return matches.Count == 1 ? matches[0] : null;
+        }
+
+        private static ObjectItem FindUniqueDirectChildByNameSafe(ObjectItem parent, string name)
+        {
+            try { return parent == null ? null : FindUniqueDirectChildByName(parent.Children as IEnumerable, name); }
+            catch { return null; }
+        }
+
+        private static string DescribeDirectChildren(IEnumerable children)
+        {
+            var result = new List<string>();
+            foreach (object raw in children)
+            {
+                var child = raw as ObjectItem;
+                if (child != null) result.Add(child.Name + " (" + child.Kind + ")");
+            }
+            return result.Count == 0 ? "<empty>" : string.Join(", ", result.ToArray());
+        }
+
         private static string FindProjectTemplatePath(IEnumerable children, string id, string parentPath)
         {
             foreach (object raw in children)
@@ -823,8 +1415,87 @@ namespace EBAssistant.Adapter
 
         private static AdapterResponse<T> Ok<T>(T data, string message) { return new AdapterResponse<T> { Success = true, Message = message, Data = data }; }
         private static AdapterResponse<T> Fail<T>(string message) { return new AdapterResponse<T> { Success = false, Message = message }; }
+        private static AdapterResponse<T> FailWithData<T>(string message, T data) { return new AdapterResponse<T> { Success = false, Message = message, Data = data }; }
         private static string Safe(Func<string> read, string fallback) { try { return read(); } catch { return fallback; } }
         private static string Describe(Exception ex) { return " " + ex.GetType().Name + "：" + ex.Message; }
+
+        private delegate bool EnumChildProc(IntPtr window, IntPtr parameter);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeRectangle
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr window);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr window, int command);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetCursorPos(int x, int y);
+
+        [DllImport("user32.dll")]
+        private static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extraInfo);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr parameter);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr window);
+
+        [DllImport("user32.dll")]
+        private static extern bool GetWindowRect(IntPtr window, out NativeRectangle rectangle);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetDC(IntPtr window);
+
+        [DllImport("user32.dll")]
+        private static extern int ReleaseDC(IntPtr window, IntPtr deviceContext);
+
+        [DllImport("gdi32.dll")]
+        private static extern uint GetPixel(IntPtr deviceContext, int x, int y);
+
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateCompatibleDC(IntPtr deviceContext);
+
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr CreateCompatibleBitmap(IntPtr deviceContext, int width, int height);
+
+        [DllImport("gdi32.dll")]
+        private static extern IntPtr SelectObject(IntPtr deviceContext, IntPtr graphicsObject);
+
+        [DllImport("gdi32.dll")]
+        private static extern bool DeleteObject(IntPtr graphicsObject);
+
+        [DllImport("gdi32.dll")]
+        private static extern bool DeleteDC(IntPtr deviceContext);
+
+        [DllImport("user32.dll")]
+        private static extern bool PrintWindow(IntPtr window, IntPtr deviceContext, uint flags);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetClassName(IntPtr window, StringBuilder className, int maximumCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetWindowText(IntPtr window, StringBuilder text, int maximumCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, string lParam);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr SendMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("oleacc.dll")]
+        private static extern int AccessibleObjectFromWindow(
+            IntPtr window,
+            uint objectId,
+            ref Guid interfaceId,
+            [In, Out, MarshalAs(UnmanagedType.Interface)] ref object accessible);
     }
 
     [DataContract] internal sealed class AdapterResponse<T> { [DataMember] public bool Success; [DataMember] public string Message; [DataMember] public T Data; }
@@ -853,6 +1524,8 @@ namespace EBAssistant.Adapter
     [DataContract] internal sealed class ValidateWorksheetAttributeIdsResult { [DataMember] public List<int> ExistingIds = new List<int>(); [DataMember] public List<int> MissingIds = new List<int>(); }
     [DataContract] internal sealed class WorksheetCreationContextRequest { [DataMember] public string TemplateProjectId; }
     [DataContract] internal sealed class WorksheetCreationContextResult { [DataMember] public string TemplateProjectPath; [DataMember] public string TargetFolderPath; [DataMember] public List<string> ExistingWorksheetNames = new List<string>(); }
+    [DataContract] internal sealed class ValidateWorksheetCreationCapabilityRequest { [DataMember] public string TemplateProjectId; [DataMember] public List<int> AttributeIds = new List<int>(); }
+    [DataContract] internal sealed class ValidateWorksheetCreationCapabilityResult { [DataMember] public bool Passed; [DataMember] public string TemporaryWorksheetName; [DataMember] public string TargetFolderPath; [DataMember] public List<string> Checks = new List<string>(); [DataMember] public List<string> CleanupChecks = new List<string>(); }
     [DataContract] internal sealed class DialogDefinitionItem { [DataMember] public string TabName; [DataMember] public int AttributeId; }
     [DataContract] internal sealed class ApplyTypeDefinitionDialogsRequest { [DataMember] public List<string> TypeItemIds; [DataMember] public List<DialogDefinitionItem> Definitions; }
     [DataContract] internal sealed class TypeDefinitionOperationRecord { [DataMember] public string TypeItemId; [DataMember] public string TypeItemName; [DataMember] public int AttributeId; [DataMember] public string TabName; [DataMember] public string Status; [DataMember] public string Message; }

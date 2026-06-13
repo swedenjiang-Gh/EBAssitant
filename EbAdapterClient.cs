@@ -93,6 +93,13 @@ public sealed class EbAdapterClient
             "GetWorksheetCreationContext",
             new WorksheetCreationContextRequest { TemplateProjectId = templateProjectId });
 
+    public Task<AdapterResponse<ValidateWorksheetCreationCapabilityResult>> ValidateWorksheetCreationCapabilityAsync(
+        ValidateWorksheetCreationCapabilityRequest request) =>
+        InvokeAsync<ValidateWorksheetCreationCapabilityResult>(
+            _adapterPath,
+            "ValidateWorksheetCreationCapability",
+            request);
+
     private static async Task<AdapterResponse<T>> InvokeAsync<T>(string path, string operation, object? request)
     {
         var startInfo = new ProcessStartInfo

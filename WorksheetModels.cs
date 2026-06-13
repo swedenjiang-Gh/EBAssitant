@@ -79,6 +79,21 @@ public sealed class WorksheetCreationContextResult
     public List<string> ExistingWorksheetNames { get; set; } = [];
 }
 
+public sealed class ValidateWorksheetCreationCapabilityRequest
+{
+    public string TemplateProjectId { get; set; } = "";
+    public List<int> AttributeIds { get; set; } = [];
+}
+
+public sealed class ValidateWorksheetCreationCapabilityResult
+{
+    public bool Passed { get; set; }
+    public string TemporaryWorksheetName { get; set; } = "";
+    public string TargetFolderPath { get; set; } = "";
+    public List<string> Checks { get; set; } = [];
+    public List<string> CleanupChecks { get; set; } = [];
+}
+
 public sealed class CreateWorksheetsRequest
 {
     public string TemplateProjectId { get; set; } = "";

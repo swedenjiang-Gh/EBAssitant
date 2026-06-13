@@ -4,7 +4,7 @@
 
 **Goal:** 在 EBAssistant 中实现带项目模板树缓存、Excel 多页签预览校验、器件工作表批量创建、自动列宽和完整日志的“工作表”功能。
 
-**Architecture:** WinForms 主程序继续只负责缓存、Excel 解析、预览校验和结果展示；所有 EB COM 读取与写入继续放在 2023/2024 强类型 x86 `.NET Framework 4.6.2` 适配器中，并通过现有 JSON stdin/stdout 协议调用。正式写入前先以独立开发操作完成一次受控能力验证；只有列标签、列顺序、列宽、保存位置、读回和清理全部通过，才实施并启用正式 `CreateWorksheets`。
+**Architecture:** WinForms 主程序继续只负责缓存、Excel 解析、预览校验和结果展示；所有 EB COM 读取、写入和受控交互命令自动化继续放在 2023/2024 x86 `.NET Framework 4.6.2` 适配器中，并通过现有 JSON stdin/stdout 协议调用。正式写入前先以独立开发操作完成一次受控能力验证；只有列标签、列顺序、列宽、保存位置、读回和清理全部通过，才实施并启用正式 `CreateWorksheets`。
 
 **Tech Stack:** C#、WinForms、`.NET 10.0-windows`、ExcelDataReader、强类型 Aucotec COM 30/31、`.NET Framework 4.6.2` x86、System.Text.Json、DataContractJsonSerializer
 
@@ -26,7 +26,8 @@
   - `Worksheet.SaveConfiguration(name, targetFolder)`
   - `Worksheet.ConfigurationObject`
   - `Worksheet.Close()`
-- 当前公开强类型 COM 中 `WorksheetAttribute.Name` 只有 getter，自定义列标签的写入配方尚未在仓库证据中明确记录。Task 6 必须先验证准确配方；若验证失败，停止正式写入实现并报告，不得用属性名称冒充 Excel 第一行标签。
+- 当前公开强类型 COM 中 `WorksheetAttribute.Name` 只有 getter。用户已允许使用 `IAucVbaInternUtils.ExecuteCommand(AucCommand.aucCmdEditColumnLabel, sourceObject)` 配合隐藏的 UI Automation/Win32 对话框处理写入自定义列标签。Task 6 必须先验证准确配方；若验证失败，停止正式写入实现并报告，不得用属性名称冒充 Excel 第一行标签。
+- 交互命令执行时允许短暂切换焦点到 EB；无需用户操作的交互界面必须立即隐藏并自动处理。优先使用 UI Automation，Win32 消息只作为同一已确认对话框的后备；禁止固定坐标和盲目 `SendKeys`。
 - 正式功能不执行临时能力验证，也不重复读回列宽；一次性能力验证只在开发阶段显式调用。
 - 自动列宽采用确定性计算后写入 `WorksheetAttribute.Width`：ASCII 字符按 1 个单位、非 ASCII 字符按 2 个单位，结果为 `Math.Clamp(visualUnits * 9 + 24, 80, 600)`。Task 6 必须在真实 EB 中确认该宽度足以完整显示长标签。
 - 只删除一次性验证创建的明确临时工作表对象；不得删除用户已有工作表。
@@ -856,7 +857,7 @@ public sealed class ValidateWorksheetCreationCapabilityResult
 var temporaryName = "__EBAssistant_WorksheetCapability_" + DateTime.Now.ToString("yyyyMMdd_HHmmss");
 ```
 
-创建配方以强类型公共 COM 为唯一允许路径：
+创建、添加列、列宽和保存使用强类型公共 COM：
 
 ```csharp
 var worksheet = templateProject.OpenWorksheetDirect(
@@ -875,24 +876,34 @@ worksheet.SaveConfiguration(temporaryName, favoritesFolder);
 
 其中适配器内 `WorksheetWidth` 使用与主程序完全相同的算法，不能引用主程序程序集。
 
-- [ ] **Step 4: 验证自定义列标签写入的准确公共 API 配方**
+- [ ] **Step 4: 验证隐藏交互命令写入自定义列标签**
 
-先读取并记录新列的 `AttributeID`、`Position`、`Name`、`AttributeName` 和 `Width`。然后仅尝试 EngineeringBaseCodemap 或已安装 EB SDK 中能够以强类型调用、且不会弹交互框的公开 API 配方。
+先把临时配置直接保存到所选项目的 `/工作表/收藏夹`，从收藏夹读回唯一配置对象，并使用同一项目的 `EquipmentFolder` 打开该工作表。`OpenWorksheet(string, ...)` 的 string 必须使用配置对象 ID，不得使用显示名称。确认 EB 当前显示的是真正工作表交互窗口后，再读取并记录新列的 `AttributeID`、`Position`、`Name`、`AttributeName` 和 `Width`。然后按列顺序：
+
+1. 唯一定位并激活当前 EB 工作表窗口。
+2. 使用 UI Automation 唯一定位对应列标题并选中。
+3. 注册窗口事件监听后调用 `IAucVbaInternUtils.ExecuteCommand(AucCommand.aucCmdEditColumnLabel, sourceObject)`。
+4. 唯一识别“编辑列标签”对话框后立即隐藏。
+5. 优先使用 UI Automation `ValuePattern` 写入标签，并使用 `InvokePattern` 确认；仅在同一已确认对话框内允许使用 Win32 `WM_SETTEXT` / `BM_CLICK` 后备。
+6. 读回 `WorksheetAttribute.Name` 确认标签准确后继续下一列。
+
+所有定位和等待均使用明确超时；失败时尝试关闭残留对话框并停止当前验证，不使用固定坐标或盲目 `SendKeys`。自动化还必须识别通用 EB 信息/错误提示，记录其文本并自动关闭，避免 `ExecuteCommand` 同步阻塞适配器。
 
 通过标准必须同时满足：
 
 - 第一列读回显示标签为“设备名称”
 - 第二列读回显示标签为“这是用于验证自动列宽的较长列标签”
 - 标签与底层属性名称可明确区分
-- 不使用 `dynamic`、反射调用隐藏成员或 UI 自动化
+- 不使用 `dynamic`、反射调用隐藏成员、固定坐标或盲目 `SendKeys`
+- 用户无需操作，编辑列标签对话框在自动处理期间不可见
 
-若没有满足条件的公开 API，立即关闭临时 Worksheet、清理已保存临时配置并将 `Passed=false`；停止 Task 7 及后续正式写入任务，向用户报告“公开强类型 API 未确认列标签写入能力”。
+若隐藏交互命令配方未通过，立即关闭临时 Worksheet、清理已保存临时配置并将 `Passed=false`；停止 Task 7 及后续正式写入任务，向用户报告准确失败步骤。
 
 - [ ] **Step 5: 读回验证保存结果**
 
-保存后通过目标“收藏”目录重新枚举并解析唯一临时工作表配置，打开该配置并验证：
+保存后通过目标“收藏夹”目录重新枚举并解析唯一临时工作表配置，从同一项目的“设备”目录打开该配置并验证：
 
-- 保存路径为所选模板项目 `/工作表/收藏`
+- 保存路径为所选模板项目 `/工作表/收藏夹`
 - 名称等于临时名称
 - 对象类型为器件
 - AID 顺序与请求一致
@@ -924,8 +935,8 @@ Expected: `Passed=true`，全部创建、标签、顺序、列宽、保存位置
 
 - EB 版本
 - 使用的模板项目路径和 ID
-- 实际成功的强类型 API 调用顺序
-- 列标签写入的准确公开 API
+- 实际成功的强类型 API 和交互命令调用顺序
+- 列标签写入的准确交互命令、窗口识别和隐藏处理配方
 - 列宽计算值和界面确认结果
 - 临时对象 ID
 - 清理读回结果
@@ -971,7 +982,7 @@ if (operation == "CreateWorksheets") return Write(CreateWorksheets(app, Read<Cre
 正式操作开始时：
 
 1. 重新解析 `TemplateProjectId` 为模板 `Project`。
-2. 重新定位唯一 `/工作表/收藏`。
+2. 重新定位唯一 `/工作表/收藏夹`。
 3. 枚举收藏下已有工作表名称，使用 `StringComparer.OrdinalIgnoreCase` 建立保留集合。
 4. 对请求中的每个有效工作表按请求顺序调用同等算法计算最终名称；每算出一个名称立刻加入保留集合，避免批次内冲突。
 
@@ -981,14 +992,15 @@ if (operation == "CreateWorksheets") return Write(CreateWorksheets(app, Read<Cre
 
 对每个请求项单独 `try/catch/finally`：
 
-1. 使用 `templateProject.OpenWorksheetDirect(AucObjectKind.aucObjDevice, AucAttribute.aucAttrUnspecified, AucVbFindCondition.aucCondEqual, "")` 创建空器件工作表。
+1. 使用所选项目自身的 `EquipmentFolder.OpenWorksheetDirect(AucObjectKind.aucObjDevice, AucAttribute.aucAttrUnspecified, AucVbFindCondition.aucCondEqual, "")` 创建空器件工作表。
 2. 按 `Position` 顺序调用 `worksheet.Attributes.Add((AucAttribute)column.AttributeId, column.Position)`。
 3. 使用 Task 6 已验证的准确公共 API 设置 `column.Label`。
 4. 设置 `WorksheetAttribute.Width = column.Width`。
 5. 设置 `worksheet.ProtectColumnWidth = true`。
 6. 调用 `worksheet.SaveConfiguration(finalName, favoritesFolder)`。
-7. 保存成功后记录完整路径，格式为“项目模板 / 模板项目完整路径 / 工作表 / 收藏 / 最终工作表名称”。
-8. `finally` 中调用 `worksheet.Close()`。
+7. 从收藏夹读回配置对象，并从同一项目的“设备”目录打开工作表后完成需要交互窗口的修改。
+8. 保存成功后记录完整路径，格式为“项目模板 / 模板项目完整路径 / 工作表 / 收藏夹 / 最终工作表名称”。
+9. `finally` 中调用 `worksheet.Close()`；即使关闭失败，也继续执行本次明确临时对象的清理和读回确认。
 
 任一列配置、标签、列宽或保存步骤失败时，该工作表记录 `Status="failed"`，继续下一个工作表。正式流程不创建临时验证对象、不重复验证列宽。
 

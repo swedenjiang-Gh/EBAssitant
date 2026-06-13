@@ -10,10 +10,14 @@
     <OutputPath>..\..\bin\Debug\net10.0-windows\Adapters\2024\</OutputPath>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="Accessibility" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.Xml" />
+    <Reference Include="UIAutomationClient" />
+    <Reference Include="UIAutomationTypes" />
+    <Reference Include="WindowsBase" />
   </ItemGroup>
   <ItemGroup>
     <Compile Include="..\AdapterProgram.cs"><Link>AdapterProgram.cs</Link></Compile>
