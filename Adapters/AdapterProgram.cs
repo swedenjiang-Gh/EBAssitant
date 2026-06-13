@@ -519,18 +519,25 @@ namespace EBAssistant.Adapter
                 Name = item.Name,
                 FullPath = path,
             };
+            IEnumerable children;
             try
             {
-                foreach (object raw in item.Children as IEnumerable)
-                {
-                    var child = raw as ObjectItem;
-                    if (child == null) continue;
-                    var childNode = ReadPermissionDirectoryNode(child, path);
-                    node.Children.Add(childNode);
-                }
+                children = item.Children as IEnumerable;
             }
             // EB user and group leaves reject Children with 0x80046951.
-            catch (COMException ex) when (ex.ErrorCode == unchecked((int)0x80046951)) { }
+            catch (COMException ex) when (ex.ErrorCode == unchecked((int)0x80046951))
+            {
+                return node;
+            }
+
+            if (children == null) return node;
+            foreach (object raw in children)
+            {
+                var child = raw as ObjectItem;
+                if (child == null) continue;
+                var childNode = ReadPermissionDirectoryNode(child, path);
+                node.Children.Add(childNode);
+            }
             return node;
         }
 
