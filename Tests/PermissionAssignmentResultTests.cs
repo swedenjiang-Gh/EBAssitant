@@ -6,6 +6,7 @@ internal static class PermissionAssignmentResultTests
     {
         AggregatesStatuses();
         CompletesWithoutFailures();
+        TreatsUnknownStatusesAsFailures();
         BuildsFailureForEveryCombination();
     }
 
@@ -46,6 +47,26 @@ internal static class PermissionAssignmentResultTests
         Assert.Equal("completed", result.Status);
         Assert.Equal(0, result.FailedCount);
         Assert.Equal(2, result.TotalCount);
+    }
+
+    private static void TreatsUnknownStatusesAsFailures()
+    {
+        var result = new PermissionMemberAssignmentResult
+        {
+            Records =
+            [
+                new() { Status = "added" },
+                new() { Status = "unexpected_status" }
+            ]
+        };
+
+        PermissionAssignmentResultSummary.Apply(result);
+
+        Assert.Equal("completed_with_failures", result.Status);
+        Assert.Equal(1, result.AddedCount);
+        Assert.Equal(0, result.SkippedCount);
+        Assert.Equal(1, result.FailedCount);
+        Assert.Equal("unexpected_status", result.Records[1].Status);
     }
 
     private static void BuildsFailureForEveryCombination()

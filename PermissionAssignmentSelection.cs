@@ -40,7 +40,7 @@ public static class PermissionAssignmentSelection
 
         foreach (var node in nodes)
         {
-            if (ids.Add(node.Id))
+            if (!string.IsNullOrWhiteSpace(node.Id) && ids.Add(node.Id))
             {
                 result.Add(node);
             }
@@ -57,7 +57,7 @@ public static class PermissionAssignmentResultSummary
         result.TotalCount = result.Records.Count;
         result.AddedCount = result.Records.Count(record => record.Status == "added");
         result.SkippedCount = result.Records.Count(record => record.Status == "skipped_existing");
-        result.FailedCount = result.Records.Count(record => record.Status == "failed");
+        result.FailedCount = result.TotalCount - result.AddedCount - result.SkippedCount;
         result.Status = result.FailedCount == 0 ? "completed" : "completed_with_failures";
     }
 

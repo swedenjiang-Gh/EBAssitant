@@ -5,6 +5,7 @@ internal static class PermissionAssignmentSelectionTests
     public static void Run()
     {
         ExcludesRootAndDeduplicatesById();
+        ExcludesMembersAndDirectoriesWithoutIds();
         RequiresMembersAndDirectories();
     }
 
@@ -33,6 +34,33 @@ internal static class PermissionAssignmentSelectionTests
         Assert.Equal("Projects", selection.Directories[0].Name);
         Assert.Equal(4, selection.CombinationCount);
         Assert.True(selection.CanApply);
+    }
+
+    private static void ExcludesMembersAndDirectoriesWithoutIds()
+    {
+        var validUser = new PermissionDirectoryNode { Id = "U1" };
+        var validDirectory = new PermissionDirectoryNode { Id = "D1" };
+
+        var selection = PermissionAssignmentSelection.Build(
+            "ROOT",
+            [
+                new PermissionDirectoryNode { Id = null! },
+                new PermissionDirectoryNode { Id = "" },
+                new PermissionDirectoryNode { Id = " " },
+                validUser
+            ],
+            [
+                new PermissionDirectoryNode { Id = null! },
+                new PermissionDirectoryNode { Id = "" },
+                new PermissionDirectoryNode { Id = "\t" },
+                validDirectory
+            ]);
+
+        Assert.Equal(1, selection.Members.Count);
+        Assert.Equal("U1", selection.Request.MemberIds[0]);
+        Assert.Equal(1, selection.Directories.Count);
+        Assert.Equal("D1", selection.Request.DirectoryIds[0]);
+        Assert.Equal(1, selection.CombinationCount);
     }
 
     private static void RequiresMembersAndDirectories()
