@@ -254,6 +254,15 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (functionName == "图形模板" || functionName == "鍥惧舰妯℃澘")
+        {
+            var form = new GraphicTemplatesForm();
+            _openWindows.Add(form);
+            form.FormClosed += (_, _) => _openWindows.Remove(form);
+            form.Show();
+            return;
+        }
+
         MessageBox.Show(
             $"{functionName}功能界面将在后续开发中实现。",
             functionName,

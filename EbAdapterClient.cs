@@ -81,6 +81,21 @@ public sealed class EbAdapterClient
     public Task<AdapterResponse<ProjectTemplateTreeResult>> GetProjectTemplateTreeAsync() =>
         InvokeAsync<ProjectTemplateTreeResult>(_adapterPath, "GetProjectTemplateTree", null);
 
+    public Task<AdapterResponse<GraphicTemplateIdentity>> GetGraphicTemplateIdentityAsync() =>
+        InvokeAsync<GraphicTemplateIdentity>(_adapterPath, "GetGraphicTemplateIdentity", null);
+
+    public Task<AdapterResponse<GraphicTemplateTreeResult>> GetGraphicTemplateTreeAsync() =>
+        InvokeAsync<GraphicTemplateTreeResult>(_adapterPath, "GetGraphicTemplateTree", null);
+
+    public Task<AdapterResponse<GraphicTemplateDirectoryNode>> GetGraphicTemplateDirectoryAsync(string directoryId) =>
+        InvokeAsync<GraphicTemplateDirectoryNode>(
+            _adapterPath,
+            "GetGraphicTemplateDirectory",
+            new GraphicTemplateDirectoryRequest { DirectoryId = directoryId });
+
+    public Task<AdapterResponse<MoveGraphicTemplatesResult>> MoveGraphicTemplatesAsync(MoveGraphicTemplatesRequest request) =>
+        InvokeAsync<MoveGraphicTemplatesResult>(_adapterPath, "MoveGraphicTemplates", request);
+
     public Task<AdapterResponse<PermissionConfigurationIdentity>> GetPermissionConfigurationIdentityAsync() =>
         InvokeAsync<PermissionConfigurationIdentity>(_adapterPath, "GetPermissionConfigurationIdentity", null);
 

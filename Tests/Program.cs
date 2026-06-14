@@ -10,10 +10,13 @@ internal static class Program
             WorksheetColumnWidthCalculatorTests.Run();
             WorksheetImportBuilderTests.Run();
             ProjectTemplateCacheTests.Run();
+            GraphicTemplateCacheTests.Run();
+            GraphicTemplateSelectionTests.Run();
+            GraphicTemplateMigrationResultTests.Run();
             WorksheetPreparationTests.Run();
             PermissionAssignmentSelectionTests.Run();
             PermissionAssignmentResultTests.Run();
-            Console.WriteLine("PASS: 7 test groups");
+            Console.WriteLine("PASS: 10 test groups");
             return 0;
         }
         catch (Exception exception)

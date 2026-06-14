@@ -47,6 +47,10 @@ namespace EBAssistant.Adapter
                 if (operation == "ValidateAttributeIds") return Write(ValidateAttributeIds(app, Read<ValidateAttributeIdsRequest>()));
                 if (operation == "GetProjectTemplateIdentity") return Write(GetProjectTemplateIdentity(app));
                 if (operation == "GetProjectTemplateTree") return Write(GetProjectTemplateTree(app));
+                if (operation == "GetGraphicTemplateIdentity") return Write(GetGraphicTemplateIdentity(app));
+                if (operation == "GetGraphicTemplateTree") return Write(GetGraphicTemplateTree(app));
+                if (operation == "GetGraphicTemplateDirectory") return Write(GetGraphicTemplateDirectory(app, Read<GraphicTemplateDirectoryRequest>()));
+                if (operation == "MoveGraphicTemplates") return Write(MoveGraphicTemplates(app, Read<MoveGraphicTemplatesRequest>()));
                 if (operation == "GetPermissionConfigurationIdentity") return Write(GetPermissionConfigurationIdentity(app));
                 if (operation == "GetPermissionConfigurationStructure") return Write(GetPermissionConfigurationStructure(app));
                 if (operation == "AddPermissionMembers") return Write(AddPermissionMembers(app, Read<PermissionMemberAssignmentRequest>()));
@@ -476,6 +480,275 @@ namespace EBAssistant.Adapter
                 if (childNode != null) node.Children.Add(childNode);
             }
             return node.Children.Count > 0 ? node : null;
+        }
+
+        private static AdapterResponse<GraphicTemplateIdentity> GetGraphicTemplateIdentity(EbApplication app)
+        {
+            var root = app.Folders.Stencils as ObjectItem;
+            if (root == null) return Fail<GraphicTemplateIdentity>("无法读取 EB 图形模板根目录。");
+            return Ok(new GraphicTemplateIdentity { Version = Version, RootId = root.ID, RootName = root.Name }, "图形模板身份读取成功。");
+        }
+
+        private static AdapterResponse<GraphicTemplateTreeResult> GetGraphicTemplateTree(EbApplication app)
+        {
+            var root = app.Folders.Stencils as ObjectItem;
+            if (root == null) return Fail<GraphicTemplateTreeResult>("无法读取 EB 图形模板根目录。");
+            var result = new GraphicTemplateTreeResult
+            {
+                Identity = new GraphicTemplateIdentity { Version = Version, RootId = root.ID, RootName = root.Name }
+            };
+            foreach (object raw in root.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child == null || IsGraphicTemplateItem(child)) continue;
+                result.Nodes.Add(ReadGraphicTemplateDirectory(child, root.Name));
+            }
+            return Ok(result, "图形模板目录读取成功。");
+        }
+
+        private static AdapterResponse<GraphicTemplateDirectoryNode> GetGraphicTemplateDirectory(EbApplication app, GraphicTemplateDirectoryRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.DirectoryId))
+                return Fail<GraphicTemplateDirectoryNode>("图形模板目录 ID 不能为空。");
+
+            var root = app.Folders.Stencils as ObjectItem;
+            if (root == null) return Fail<GraphicTemplateDirectoryNode>("无法读取 EB 图形模板根目录。");
+
+            var directory = string.Equals(request.DirectoryId, root.ID, StringComparison.OrdinalIgnoreCase)
+                ? root
+                : app.Utils.GetSnglObjectByID(request.DirectoryId) as ObjectItem;
+            if (directory == null) return Fail<GraphicTemplateDirectoryNode>("所选图形模板目录已不存在，请刷新后重试。");
+            if (IsGraphicTemplateItem(directory)) return Fail<GraphicTemplateDirectoryNode>("所选对象不是图形模板目录。");
+
+            var path = BuildGraphicTemplateDirectoryPath(root, directory);
+            var node = ReadGraphicTemplateDirectoryShallow(directory, ParentPath(path));
+            if (string.IsNullOrWhiteSpace(path)) node.FullPath = root.Name + " / " + directory.Name;
+            return Ok(node, "图形模板目录读取成功。");
+        }
+
+        private static GraphicTemplateDirectoryNode ReadGraphicTemplateDirectory(ObjectItem item, string parentPath)
+        {
+            var path = parentPath + " / " + item.Name;
+            var node = new GraphicTemplateDirectoryNode
+            {
+                Id = item.ID,
+                Name = item.Name,
+                FullPath = path,
+                Kind = item.Kind.ToString(),
+                TypeName = Safe(delegate { return item.TypeName; }, "")
+            };
+            foreach (object raw in item.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child == null) continue;
+                if (IsGraphicTemplateItem(child))
+                    node.Templates.Add(ReadGraphicTemplateItem(child, item, path));
+                else
+                    node.Children.Add(ReadGraphicTemplateDirectory(child, path));
+            }
+            return node;
+        }
+
+        private static GraphicTemplateDirectoryNode ReadGraphicTemplateDirectoryShallow(ObjectItem item, string parentPath)
+        {
+            var path = string.IsNullOrWhiteSpace(parentPath) ? item.Name : parentPath + " / " + item.Name;
+            var node = new GraphicTemplateDirectoryNode
+            {
+                Id = item.ID,
+                Name = item.Name,
+                FullPath = path,
+                Kind = item.Kind.ToString(),
+                TypeName = Safe(delegate { return item.TypeName; }, "")
+            };
+            foreach (object raw in item.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child == null) continue;
+                if (IsGraphicTemplateItem(child))
+                {
+                    node.Templates.Add(ReadGraphicTemplateItem(child, item, path));
+                    continue;
+                }
+                node.Children.Add(new GraphicTemplateDirectoryNode
+                {
+                    Id = child.ID,
+                    Name = child.Name,
+                    FullPath = path + " / " + child.Name,
+                    Kind = child.Kind.ToString(),
+                    TypeName = Safe(delegate { return child.TypeName; }, "")
+                });
+            }
+            return node;
+        }
+
+        private static GraphicTemplateItem ReadGraphicTemplateItem(ObjectItem item, ObjectItem parent, string parentPath)
+        {
+            var sync = ReadAttributeValue(item, 45);
+            var parentId = parent == null ? "" : parent.ID;
+            return new GraphicTemplateItem
+            {
+                Id = item.ID,
+                Name = item.Name,
+                FullPath = parentPath + " / " + item.Name,
+                ParentDirectoryId = parentId,
+                Kind = item.Kind.ToString(),
+                TypeName = Safe(delegate { return item.TypeName; }, ""),
+                SymbolSyncDesignation = sync,
+                MasterUniRef = string.IsNullOrWhiteSpace(parentId) || string.IsNullOrWhiteSpace(sync) ? "" : parentId + "#" + sync
+            };
+        }
+
+        private static AdapterResponse<MoveGraphicTemplatesResult> MoveGraphicTemplates(EbApplication app, MoveGraphicTemplatesRequest request)
+        {
+            var result = new MoveGraphicTemplatesResult();
+            if (request == null || string.IsNullOrWhiteSpace(request.TargetDirectoryId) || request.TemplateIds == null || request.TemplateIds.Count == 0)
+                return FailWithData("图形模板迁移请求无效。", result);
+
+            var root = app.Folders.Stencils as ObjectItem;
+            if (root == null) return FailWithData("无法读取 EB 图形模板根目录。", result);
+
+            var target = app.Utils.GetSnglObjectByID(request.TargetDirectoryId) as ObjectItem;
+            if (target == null) return FailWithData("迁往目录已不存在，请刷新后重试。", result);
+            if (IsGraphicTemplateItem(target)) return FailWithData("迁往目标不是图形模板目录。", result);
+            if (HasGraphicTemplateDirectoryChildren(target)) return FailWithData("只能迁往最后一级图形模板目录。", result);
+
+            result.TargetDirectoryId = target.ID;
+            result.TargetDirectoryPath = BuildGraphicTemplateDirectoryPath(root, target);
+            var processId = FindEbProcessId();
+            foreach (var id in request.TemplateIds.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                result.Records.Add(MoveGraphicTemplate(app, root, target, result.TargetDirectoryPath, processId, id));
+            }
+            ApplyGraphicTemplateMigrationSummary(result);
+            return result.FailedCount == 0
+                ? Ok(result, "图形模板迁移完成。")
+                : new AdapterResponse<MoveGraphicTemplatesResult> { Success = false, Message = "部分或全部图形模板迁移失败。", Data = result };
+        }
+
+        private static GraphicTemplateMigrationRecord MoveGraphicTemplate(EbApplication app, ObjectItem root, ObjectItem target, string targetPath, int processId, string templateId)
+        {
+            var record = new GraphicTemplateMigrationRecord
+            {
+                TemplateId = templateId,
+                TargetDirectoryId = target.ID,
+                TargetDirectoryPath = targetPath
+            };
+            try
+            {
+                var item = app.Utils.GetSnglObjectByID(templateId) as ObjectItem;
+                if (item == null) throw new InvalidOperationException("模板图形已不存在。");
+                if (!IsGraphicTemplateItem(item)) throw new InvalidOperationException("所选对象不是模板图形。");
+
+                record.TemplateName = item.Name;
+                record.SourceDirectoryId = item.Parent == null ? "" : item.Parent.ID;
+                record.SourceDirectoryPath = item.Parent == null ? "" : BuildGraphicTemplateDirectoryPath(root, item.Parent);
+                var targetTemplateIdsBefore = GetDirectGraphicTemplateIds(target);
+
+                var copied = CopyGraphicTemplateObject(app, item, target, processId);
+                if (!copied) throw new InvalidOperationException("EB 未接受模板图形复制。");
+
+                string readbackMessage;
+                if (!TryConfirmGraphicTemplateInTarget(app, target, templateId, record.TemplateName, targetTemplateIdsBefore, out var confirmedId, out readbackMessage))
+                    throw new InvalidOperationException(readbackMessage);
+                record.ConfirmedTemplateId = confirmedId;
+                record.Status = "copied";
+                record.Message = "复制成功（符号复制/粘贴）；" + readbackMessage + "；源对象保留。";
+            }
+            catch (Exception ex)
+            {
+                record.Status = "failed";
+                record.Message = Describe(ex);
+            }
+            return record;
+        }
+
+        private static bool CopyGraphicTemplateObject(EbApplication app, ObjectItem item, ObjectItem target, int processId)
+        {
+            RunWithGraphicTemplateMismatchDialog(processId, delegate
+            {
+                var utils = (IAucVbaInternUtils)app;
+                utils.ExecuteCommand(AucCommand.aucCmdSymCopy, item);
+                utils.ExecuteCommand(AucCommand.aucCmdSymPaste, target);
+                return true;
+            });
+            return true;
+        }
+
+        private static bool TryConfirmGraphicTemplateInTarget(
+            EbApplication app,
+            ObjectItem target,
+            string originalId,
+            string originalName,
+            HashSet<string> targetTemplateIdsBefore,
+            out string confirmedId,
+            out string message)
+        {
+            confirmedId = "";
+            var readback = app.Utils.GetSnglObjectByID(originalId) as ObjectItem;
+            if (readback != null && readback.Parent != null && string.Equals(readback.Parent.ID, target.ID, StringComparison.OrdinalIgnoreCase))
+            {
+                confirmedId = readback.ID;
+                message = "按原 ID 在目标目录读回确认。";
+                return true;
+            }
+
+            var candidates = new List<ObjectItem>();
+            foreach (object raw in target.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child == null || !IsGraphicTemplateItem(child)) continue;
+                if (targetTemplateIdsBefore.Contains(child.ID)) continue;
+                if (!string.Equals(child.Name, originalName, StringComparison.OrdinalIgnoreCase)) continue;
+                candidates.Add(child);
+            }
+
+            if (candidates.Count == 1)
+            {
+                confirmedId = candidates[0].ID;
+                message = "目标目录新增模板图形读回确认，新 ID：" + confirmedId + "。";
+                return true;
+            }
+
+            message = candidates.Count == 0
+                ? "迁移后无法在目标目录读回确认。"
+                : "迁移后目标目录出现多个新增候选模板图形，无法唯一确认。";
+            return false;
+        }
+
+        private static HashSet<string> GetDirectGraphicTemplateIds(ObjectItem directory)
+        {
+            var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (object raw in directory.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && IsGraphicTemplateItem(child)) ids.Add(child.ID);
+            }
+            return ids;
+        }
+
+        private static bool RunWithGraphicTemplateMismatchDialog(int processId, Func<bool> action)
+        {
+            var stopDialogWatcher = false;
+            Exception dialogError = null;
+            var watcher = new Thread(delegate()
+            {
+                try { HandleGraphicTemplateMismatchDialog(processId, delegate { return stopDialogWatcher; }, 60000); }
+                catch (Exception ex) { dialogError = ex; }
+            });
+            watcher.IsBackground = true;
+            watcher.SetApartmentState(ApartmentState.STA);
+            watcher.Start();
+
+            try
+            {
+                return action();
+            }
+            finally
+            {
+                stopDialogWatcher = true;
+                watcher.Join(1000);
+                if (dialogError != null) throw new InvalidOperationException("处理图形符号类型转换确认框失败。", dialogError);
+            }
         }
 
         private static void ReadPermissionConfigurationFolders(
@@ -1286,6 +1559,43 @@ namespace EBAssistant.Adapter
             catch { return false; }
         }
 
+        private static string ReadAttributeValue(ObjectItem item, int aid)
+        {
+            try
+            {
+                foreach (object raw in item.Attributes as IEnumerable)
+                {
+                    var attr = raw as Aucotec.Attribute;
+                    if (attr != null && (int)attr.ID == aid) return Convert.ToString(attr.Value);
+                }
+            }
+            catch { }
+            return "";
+        }
+
+        private static bool IsGraphicTemplateItem(ObjectItem item)
+        {
+            return !string.IsNullOrWhiteSpace(ReadAttributeValue(item, 45));
+        }
+
+        private static bool HasGraphicTemplateDirectoryChildren(ObjectItem item)
+        {
+            foreach (object raw in item.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && !IsGraphicTemplateItem(child)) return true;
+            }
+            return false;
+        }
+
+        private static void ApplyGraphicTemplateMigrationSummary(MoveGraphicTemplatesResult result)
+        {
+            result.TotalCount = result.Records.Count;
+            result.MovedCount = result.Records.Count(record => record.Status == "moved" || record.Status == "copied");
+            result.FailedCount = result.TotalCount - result.MovedCount;
+            result.Status = result.FailedCount == 0 ? "completed" : result.MovedCount == 0 ? "failed" : "partial_failed";
+        }
+
         private static bool IsFolderKind(AucObjectKind kind)
         {
             var name = kind.ToString();
@@ -1582,6 +1892,144 @@ namespace EBAssistant.Adapter
             return true;
         }
 
+        private static void HandleGraphicTemplateMismatchDialog(int processId, Func<bool> shouldStop, int timeoutMilliseconds)
+        {
+            if (processId <= 0) return;
+            var end = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
+            while (!shouldStop() && DateTime.UtcNow < end)
+            {
+                var handle = FindGraphicTemplateMismatchDialogHandle(processId);
+                if (handle != IntPtr.Zero)
+                {
+                    if (!ClickDialogConfirmButton(handle))
+                        throw new InvalidOperationException("无法定位图形符号类型转换确认按钮。");
+                    return;
+                }
+
+                var dialog = FindGraphicTemplateMismatchDialog(processId);
+                if (dialog != null)
+                {
+                    object pattern;
+                    var button = FindGraphicTemplateConfirmButton(dialog);
+                    handle = new IntPtr(dialog.Current.NativeWindowHandle);
+                    if (button != null && button.TryGetCurrentPattern(InvokePattern.Pattern, out pattern))
+                        ((InvokePattern)pattern).Invoke();
+                    else if (!ClickDialogConfirmButton(handle))
+                        throw new InvalidOperationException("无法定位图形符号类型转换确认按钮。");
+                    return;
+                }
+                Thread.Sleep(100);
+            }
+        }
+
+        private static IntPtr FindGraphicTemplateMismatchDialogHandle(int processId)
+        {
+            var result = IntPtr.Zero;
+            EnumWindows(delegate(IntPtr handle, IntPtr parameter)
+            {
+                int windowProcessId;
+                GetWindowThreadProcessId(handle, out windowProcessId);
+                if (windowProcessId != processId || !IsWindowVisible(handle))
+                    return true;
+
+                var className = new StringBuilder(128);
+                GetClassName(handle, className, className.Capacity);
+                if (!string.Equals(className.ToString(), "#32770", StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                var text = CollectWindowText(handle);
+                if (IsGraphicTemplateMismatchText(text) && HasDialogConfirmButton(handle))
+                {
+                    result = handle;
+                    return false;
+                }
+
+                return true;
+            }, IntPtr.Zero);
+            return result;
+        }
+
+        private static AutomationElement FindGraphicTemplateMismatchDialog(int processId)
+        {
+            var processCondition = new PropertyCondition(AutomationElement.ProcessIdProperty, processId);
+            var windows = AutomationElement.RootElement.FindAll(TreeScope.Children, processCondition);
+            foreach (AutomationElement window in windows)
+            {
+                if (IsEngineeringBaseMainWindow(window)) continue;
+                var handle = new IntPtr(window.Current.NativeWindowHandle);
+                var text = (window.Current.Name ?? "") + " " + CollectDialogText(window) + " " + CollectWindowText(handle);
+                if (IsGraphicTemplateMismatchText(text) &&
+                    (FindGraphicTemplateConfirmButton(window) != null || HasDialogConfirmButton(handle)))
+                    return window;
+            }
+            return null;
+        }
+
+        private static bool IsGraphicTemplateMismatchText(string text)
+        {
+            return text != null &&
+                text.IndexOf("图形符号类型", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                text.IndexOf("图形模板类型", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                text.IndexOf("不匹配", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static bool IsEngineeringBaseMainWindow(AutomationElement window)
+        {
+            var handle = new IntPtr(window.Current.NativeWindowHandle);
+            if (handle == IntPtr.Zero) return false;
+            var className = new StringBuilder(128);
+            GetClassName(handle, className, className.Capacity);
+            var title = window.Current.Name ?? "";
+            return className.ToString().StartsWith("Afx:", StringComparison.OrdinalIgnoreCase) &&
+                title.IndexOf("AUCOTEC", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                title.IndexOf("Engineering Base", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static AutomationElement FindGraphicTemplateConfirmButton(AutomationElement dialog)
+        {
+            var buttons = dialog.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button));
+            foreach (AutomationElement button in buttons)
+            {
+                var name = (button.Current.Name ?? "").Replace("&", "");
+                if (string.Equals(name, "确定", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "OK", StringComparison.OrdinalIgnoreCase))
+                    return button;
+            }
+            return null;
+        }
+
+        private static string CollectDialogText(AutomationElement dialog)
+        {
+            var parts = new List<string>();
+            var texts = dialog.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text));
+            foreach (AutomationElement text in texts)
+            {
+                parts.Add(text.Current.Name ?? "");
+            }
+            return string.Join(" ", parts.ToArray());
+        }
+
+        private static string CollectWindowText(IntPtr window)
+        {
+            if (window == IntPtr.Zero) return "";
+            var parts = new List<string>();
+            EnumChildWindows(window, delegate(IntPtr handle, IntPtr parameter)
+            {
+                var text = new StringBuilder(512);
+                GetWindowText(handle, text, text.Capacity);
+                if (text.Length > 0) parts.Add(text.ToString());
+                return true;
+            }, IntPtr.Zero);
+            return string.Join(" ", parts.ToArray());
+        }
+
+        private static bool HasDialogConfirmButton(IntPtr dialog)
+        {
+            return dialog != IntPtr.Zero &&
+                (FindChildWindow(dialog, "Button", "确定") != IntPtr.Zero ||
+                 FindChildWindow(dialog, "Button", "OK") != IntPtr.Zero);
+        }
+
         private static IntPtr FindChildWindow(IntPtr parent, string className, string title)
         {
             var result = IntPtr.Zero;
@@ -1797,6 +2245,30 @@ namespace EBAssistant.Adapter
             return null;
         }
 
+        private static string BuildGraphicTemplateDirectoryPath(ObjectItem root, ObjectItem directory)
+        {
+            var names = new List<string>();
+            var current = directory;
+            while (current != null)
+            {
+                names.Add(current.Name);
+                if (string.Equals(current.ID, root.ID, StringComparison.OrdinalIgnoreCase)) break;
+                current = current.Parent as ObjectItem;
+            }
+            names.Reverse();
+            if (names.Count == 0 || !string.Equals(names[0], root.Name, StringComparison.OrdinalIgnoreCase))
+                names.Insert(0, root.Name);
+            return string.Join(" / ", names.ToArray());
+        }
+
+        private static string ParentPath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return "";
+            const string marker = " / ";
+            var index = path.LastIndexOf(marker, StringComparison.Ordinal);
+            return index < 0 ? "" : path.Substring(0, index);
+        }
+
         private static ObjectItem FindFolder(IEnumerable children, string id)
         {
             foreach (object raw in children)
@@ -1881,6 +2353,12 @@ namespace EBAssistant.Adapter
         private static extern bool EnumChildWindows(IntPtr parent, EnumChildProc callback, IntPtr parameter);
 
         [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumChildProc callback, IntPtr parameter);
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowThreadProcessId(IntPtr window, out int processId);
+
+        [DllImport("user32.dll")]
         private static extern bool IsWindowVisible(IntPtr window);
 
         [DllImport("user32.dll")]
@@ -1953,6 +2431,14 @@ namespace EBAssistant.Adapter
     [DataContract] internal sealed class ProjectTemplateIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; }
     [DataContract] internal sealed class ProjectTemplateNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public bool IsTemplateProject; [DataMember] public List<ProjectTemplateNode> Children = new List<ProjectTemplateNode>(); }
     [DataContract] internal sealed class ProjectTemplateTreeResult { [DataMember] public ProjectTemplateIdentity Identity; [DataMember] public List<ProjectTemplateNode> Nodes = new List<ProjectTemplateNode>(); }
+    [DataContract] internal sealed class GraphicTemplateIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; }
+    [DataContract] internal sealed class GraphicTemplateItem { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public string ParentDirectoryId; [DataMember] public string Kind; [DataMember] public string TypeName; [DataMember] public string SymbolSyncDesignation; [DataMember] public string MasterUniRef; }
+    [DataContract] internal sealed class GraphicTemplateDirectoryNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public string Kind; [DataMember] public string TypeName; [DataMember] public List<GraphicTemplateDirectoryNode> Children = new List<GraphicTemplateDirectoryNode>(); [DataMember] public List<GraphicTemplateItem> Templates = new List<GraphicTemplateItem>(); }
+    [DataContract] internal sealed class GraphicTemplateTreeResult { [DataMember] public GraphicTemplateIdentity Identity; [DataMember] public List<GraphicTemplateDirectoryNode> Nodes = new List<GraphicTemplateDirectoryNode>(); }
+    [DataContract] internal sealed class GraphicTemplateDirectoryRequest { [DataMember] public string DirectoryId; }
+    [DataContract] internal sealed class MoveGraphicTemplatesRequest { [DataMember] public string TargetDirectoryId; [DataMember] public List<string> TemplateIds = new List<string>(); }
+    [DataContract] internal sealed class GraphicTemplateMigrationRecord { [DataMember] public string TemplateId; [DataMember] public string ConfirmedTemplateId; [DataMember] public string TemplateName; [DataMember] public string SourceDirectoryId; [DataMember] public string SourceDirectoryPath; [DataMember] public string TargetDirectoryId; [DataMember] public string TargetDirectoryPath; [DataMember] public string Status; [DataMember] public string Message; }
+    [DataContract] internal sealed class MoveGraphicTemplatesResult { [DataMember] public string Status; [DataMember] public string TargetDirectoryId; [DataMember] public string TargetDirectoryPath; [DataMember] public int TotalCount; [DataMember] public int MovedCount; [DataMember] public int FailedCount; [DataMember] public List<GraphicTemplateMigrationRecord> Records = new List<GraphicTemplateMigrationRecord>(); }
     [DataContract] internal sealed class ValidateAttributeIdsRequest { [DataMember] public List<int> AttributeIds; }
     [DataContract] internal sealed class ValidateAttributeIdsResult { [DataMember] public List<int> ExistingIds; [DataMember] public List<int> MissingIds; }
     [DataContract] internal sealed class ValidateWorksheetAttributeIdsRequest { [DataMember] public List<int> AttributeIds = new List<int>(); }
