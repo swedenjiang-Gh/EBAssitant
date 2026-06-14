@@ -1,5 +1,7 @@
 bin/
 obj/
+artifacts/
+.wix/
 *.user
 .vs/
 node_modules/
