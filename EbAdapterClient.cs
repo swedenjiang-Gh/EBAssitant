@@ -96,6 +96,9 @@ public sealed class EbAdapterClient
     public Task<AdapterResponse<MoveGraphicTemplatesResult>> MoveGraphicTemplatesAsync(MoveGraphicTemplatesRequest request) =>
         InvokeAsync<MoveGraphicTemplatesResult>(_adapterPath, "MoveGraphicTemplates", request);
 
+    public Task<AdapterResponse<CreateGraphicTemplatesResult>> CreateGraphicTemplatesAsync(CreateGraphicTemplatesRequest request) =>
+        InvokeAsync<CreateGraphicTemplatesResult>(_adapterPath, "CreateGraphicTemplates", request);
+
     public Task<AdapterResponse<PermissionConfigurationIdentity>> GetPermissionConfigurationIdentityAsync() =>
         InvokeAsync<PermissionConfigurationIdentity>(_adapterPath, "GetPermissionConfigurationIdentity", null);
 

@@ -7,6 +7,8 @@ public sealed class GraphicTemplatesForm : Form
     private readonly Label _status = new() { Dock = DockStyle.Bottom, Height = 34, Padding = new Padding(8), Text = "正在连接当前 EB..." };
     private readonly Button _refresh = new() { Text = "刷新", Width = 100, Height = 34 };
     private readonly Button _move = new() { Text = "迁移模板图形", Width = 140, Height = 34, Enabled = false };
+    private readonly Button _batchMove = new() { Text = "按表格迁移", Width = 120, Height = 34 };
+    private readonly Button _create = new() { Text = "新建模板图形", Width = 140, Height = 34 };
     private readonly List<Form> _childWindows = [];
     private EbAdapterClient? _client;
     private GraphicTemplateIdentity? _identity;
@@ -22,6 +24,8 @@ public sealed class GraphicTemplatesForm : Form
         var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 48, Padding = new Padding(7), FlowDirection = FlowDirection.LeftToRight };
         toolbar.Controls.Add(_refresh);
         toolbar.Controls.Add(_move);
+        toolbar.Controls.Add(_batchMove);
+        toolbar.Controls.Add(_create);
 
         var split = new SplitContainer { Dock = DockStyle.Fill, SplitterDistance = 430 };
         split.Panel1.Controls.Add(_tree);
@@ -31,6 +35,8 @@ public sealed class GraphicTemplatesForm : Form
         _templates.ItemCheck += (_, _) => BeginInvoke(new Action(UpdateMoveButton));
         _refresh.Click += async (_, _) => await RefreshSelectedDirectoryAsync();
         _move.Click += async (_, _) => await MoveSelectedTemplatesAsync();
+        _batchMove.Click += (_, _) => OpenBatchMigration();
+        _create.Click += async (_, _) => await CreateTemplatesAsync();
 
         Controls.Add(split);
         Controls.Add(toolbar);
@@ -178,6 +184,73 @@ public sealed class GraphicTemplatesForm : Form
         SetBusy(false, response.Message);
     }
 
+    private void OpenBatchMigration()
+    {
+        if (_cache is null) return;
+        var form = new GraphicTemplateBatchMigrationForm(_cache);
+        _childWindows.Add(form);
+        form.FormClosed += (_, _) => _childWindows.Remove(form);
+        form.Show();
+    }
+
+    private async Task CreateTemplatesAsync()
+    {
+        if (_client is null || _cache is null) return;
+        if (_tree.SelectedNode?.Tag is not GraphicTemplateDirectoryNode selected ||
+            !GraphicTemplateSelection.IsLeafDirectory(selected) ||
+            selected.Templates.Count != 1)
+        {
+            MessageBox.Show(
+                this,
+                "需要选择最后一级目录，并且目录中只能存在一个模板图形。",
+                "新建模板图形",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            return;
+        }
+
+        using var countDialog = new GraphicTemplateCreationCountForm();
+        if (countDialog.ShowDialog(this) != DialogResult.OK) return;
+
+        SetBusy(true, $"正在创建 {countDialog.TotalCount - 1} 个模板图形...");
+        try
+        {
+            var response = await _client.CreateGraphicTemplatesAsync(new CreateGraphicTemplatesRequest
+            {
+                DirectoryId = selected.Id,
+                SourceTemplateId = selected.Templates[0].Id,
+                RequestedTotalCount = countDialog.TotalCount
+            });
+            if (response.Data is null)
+            {
+                MessageBox.Show(this, response.Message, "新建模板图形失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                return;
+            }
+
+            string logDirectory;
+            try { logDirectory = GraphicTemplateCreationLogWriter.Write(response.Data); }
+            catch (Exception ex)
+            {
+                logDirectory = "";
+                MessageBox.Show(this, $"操作已完成，但保存日志失败：{ex.Message}", "新建模板图形", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+
+            var resultForm = new GraphicTemplateCreationResultForm(response.Data, logDirectory);
+            _childWindows.Add(resultForm);
+            resultForm.FormClosed += (_, _) => _childWindows.Remove(resultForm);
+            resultForm.Show();
+            await RefreshDirectoryByIdAsync(selected.Id, false);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"新建模板图形失败：{ex.Message}", "新建模板图形", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+        finally
+        {
+            SetBusy(false, "新建模板图形操作已结束。");
+        }
+    }
+
     private async Task RefreshAfterMoveAsync(List<GraphicTemplateItem> movedTemplates, string targetDirectoryId)
     {
         var directoryIds = movedTemplates
@@ -262,7 +335,7 @@ public sealed class GraphicTemplatesForm : Form
 
     private void SetBusy(bool busy, string message)
     {
-        _tree.Enabled = _templates.Enabled = _refresh.Enabled = !busy;
+        _tree.Enabled = _templates.Enabled = _refresh.Enabled = _batchMove.Enabled = _create.Enabled = !busy;
         _move.Enabled = !busy && _templates.CheckedItems.Count > 0;
         _status.Text = message;
         UseWaitCursor = busy;

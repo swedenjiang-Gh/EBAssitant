@@ -13,10 +13,13 @@ internal static class Program
             GraphicTemplateCacheTests.Run();
             GraphicTemplateSelectionTests.Run();
             GraphicTemplateMigrationResultTests.Run();
+            GraphicTemplateBatchMigrationTests.Run();
+            GraphicTemplateBatchExcelImporterTests.Run();
+            GraphicTemplateCreationTests.Run();
             WorksheetPreparationTests.Run();
             PermissionAssignmentSelectionTests.Run();
             PermissionAssignmentResultTests.Run();
-            Console.WriteLine("PASS: 10 test groups");
+            Console.WriteLine("PASS: 13 test groups");
             return 0;
         }
         catch (Exception exception)

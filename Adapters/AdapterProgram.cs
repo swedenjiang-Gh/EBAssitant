@@ -51,6 +51,7 @@ namespace EBAssistant.Adapter
                 if (operation == "GetGraphicTemplateTree") return Write(GetGraphicTemplateTree(app));
                 if (operation == "GetGraphicTemplateDirectory") return Write(GetGraphicTemplateDirectory(app, Read<GraphicTemplateDirectoryRequest>()));
                 if (operation == "MoveGraphicTemplates") return Write(MoveGraphicTemplates(app, Read<MoveGraphicTemplatesRequest>()));
+                if (operation == "CreateGraphicTemplates") return Write(CreateGraphicTemplates(app, Read<CreateGraphicTemplatesRequest>()));
                 if (operation == "GetPermissionConfigurationIdentity") return Write(GetPermissionConfigurationIdentity(app));
                 if (operation == "GetPermissionConfigurationStructure") return Write(GetPermissionConfigurationStructure(app));
                 if (operation == "AddPermissionMembers") return Write(AddPermissionMembers(app, Read<PermissionMemberAssignmentRequest>()));
@@ -724,6 +725,115 @@ namespace EBAssistant.Adapter
                 if (child != null && IsGraphicTemplateItem(child)) ids.Add(child.ID);
             }
             return ids;
+        }
+
+        private static List<string> WaitForAddedGraphicTemplateIds(
+            ObjectItem directory,
+            HashSet<string> before,
+            int timeoutMilliseconds)
+        {
+            var end = DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);
+            do
+            {
+                var added = GetDirectGraphicTemplateIds(directory).Where(id => !before.Contains(id)).ToList();
+                if (added.Count > 0) return added;
+                Thread.Sleep(100);
+            } while (DateTime.UtcNow < end);
+            return new List<string>();
+        }
+
+        private static AdapterResponse<CreateGraphicTemplatesResult> CreateGraphicTemplates(
+            EbApplication app,
+            CreateGraphicTemplatesRequest request)
+        {
+            var result = new CreateGraphicTemplatesResult();
+            if (request == null ||
+                string.IsNullOrWhiteSpace(request.DirectoryId) ||
+                string.IsNullOrWhiteSpace(request.SourceTemplateId) ||
+                request.RequestedTotalCount < 2 ||
+                request.RequestedTotalCount > 200)
+                return FailWithData("新建模板图形请求无效。", result);
+
+            var root = app.Folders.Stencils as ObjectItem;
+            if (root == null) return FailWithData("无法读取 EB 图形模板根目录。", result);
+
+            var directory = app.Utils.GetSnglObjectByID(request.DirectoryId) as ObjectItem;
+            if (directory == null) return FailWithData("所选目录已不存在，请刷新后重试。", result);
+            if (IsGraphicTemplateItem(directory)) return FailWithData("所选对象不是图形模板目录。", result);
+            if (HasGraphicTemplateDirectoryChildren(directory)) return FailWithData("只能在最后一级图形模板目录中新建。", result);
+
+            var source = app.Utils.GetSnglObjectByID(request.SourceTemplateId) as ObjectItem;
+            if (source == null || !IsGraphicTemplateItem(source))
+                return FailWithData("源模板图形已不存在。", result);
+            if (source.Parent == null || !string.Equals(source.Parent.ID, directory.ID, StringComparison.OrdinalIgnoreCase))
+                return FailWithData("源模板图形不在所选目录中。", result);
+
+            var originalIds = GetDirectGraphicTemplateIds(directory);
+            if (originalIds.Count != 1 || !originalIds.Contains(source.ID))
+                return FailWithData("所选目录中必须恰好存在一个模板图形。", result);
+
+            result.DirectoryId = directory.ID;
+            result.DirectoryPath = BuildGraphicTemplateDirectoryPath(root, directory);
+            result.SourceTemplateId = source.ID;
+            result.SourceTemplateName = source.Name;
+            result.RequestedTotalCount = request.RequestedTotalCount;
+            result.OriginalCount = originalIds.Count;
+
+            var processId = FindEbProcessId();
+            try
+            {
+                RunWithGraphicTemplateMismatchDialog(processId, delegate
+                {
+                    var utils = (IAucVbaInternUtils)app;
+                    utils.ExecuteCommand(AucCommand.aucCmdSymCopy, source);
+                    for (var copyNumber = 1; copyNumber < request.RequestedTotalCount; copyNumber++)
+                    {
+                        var before = GetDirectGraphicTemplateIds(directory);
+                        var record = new GraphicTemplateCreationRecord { CopyNumber = copyNumber };
+                        try
+                        {
+                            utils.ExecuteCommand(AucCommand.aucCmdSymPaste, directory);
+                            var added = WaitForAddedGraphicTemplateIds(directory, before, 5000);
+                            if (added.Count != 1)
+                                throw new InvalidOperationException(
+                                    added.Count == 0
+                                        ? "粘贴后无法在当前目录读回新增模板图形。"
+                                        : "粘贴后出现多个新增模板图形，无法唯一确认。");
+                            record.ConfirmedTemplateId = added[0];
+                            record.Status = "created";
+                            record.Message = "创建成功并按新增 ID 读回确认。";
+                            result.CreatedCount++;
+                        }
+                        catch (Exception ex)
+                        {
+                            record.Status = "failed";
+                            record.Message = Describe(ex);
+                            result.Records.Add(record);
+                            break;
+                        }
+                        result.Records.Add(record);
+                    }
+                    return true;
+                });
+            }
+            catch (Exception ex)
+            {
+                if (!result.Records.Any(record => record.Status == "failed"))
+                {
+                    result.Records.Add(new GraphicTemplateCreationRecord
+                    {
+                        CopyNumber = result.CreatedCount + 1,
+                        Status = "failed",
+                        Message = Describe(ex)
+                    });
+                }
+            }
+
+            result.ConfirmedFinalCount = GetDirectGraphicTemplateIds(directory).Count;
+            ApplyGraphicTemplateCreationSummary(result);
+            return result.Status == "completed"
+                ? Ok(result, "模板图形创建完成。")
+                : FailWithData("模板图形创建未全部完成，已停止后续复制。", result);
         }
 
         private static bool RunWithGraphicTemplateMismatchDialog(int processId, Func<bool> action)
@@ -1596,6 +1706,14 @@ namespace EBAssistant.Adapter
             result.Status = result.FailedCount == 0 ? "completed" : result.MovedCount == 0 ? "failed" : "partial_failed";
         }
 
+        private static void ApplyGraphicTemplateCreationSummary(CreateGraphicTemplatesResult result)
+        {
+            var expectedCreated = Math.Max(0, result.RequestedTotalCount - result.OriginalCount);
+            result.Status = expectedCreated > 0 && result.CreatedCount >= expectedCreated
+                ? "completed"
+                : result.CreatedCount > 0 ? "partial" : "failed";
+        }
+
         private static bool IsFolderKind(AucObjectKind kind)
         {
             var name = kind.ToString();
@@ -1903,7 +2021,8 @@ namespace EBAssistant.Adapter
                 {
                     if (!ClickDialogConfirmButton(handle))
                         throw new InvalidOperationException("无法定位图形符号类型转换确认按钮。");
-                    return;
+                    Thread.Sleep(100);
+                    continue;
                 }
 
                 var dialog = FindGraphicTemplateMismatchDialog(processId);
@@ -1916,7 +2035,8 @@ namespace EBAssistant.Adapter
                         ((InvokePattern)pattern).Invoke();
                     else if (!ClickDialogConfirmButton(handle))
                         throw new InvalidOperationException("无法定位图形符号类型转换确认按钮。");
-                    return;
+                    Thread.Sleep(100);
+                    continue;
                 }
                 Thread.Sleep(100);
             }
@@ -2439,6 +2559,9 @@ namespace EBAssistant.Adapter
     [DataContract] internal sealed class MoveGraphicTemplatesRequest { [DataMember] public string TargetDirectoryId; [DataMember] public List<string> TemplateIds = new List<string>(); }
     [DataContract] internal sealed class GraphicTemplateMigrationRecord { [DataMember] public string TemplateId; [DataMember] public string ConfirmedTemplateId; [DataMember] public string TemplateName; [DataMember] public string SourceDirectoryId; [DataMember] public string SourceDirectoryPath; [DataMember] public string TargetDirectoryId; [DataMember] public string TargetDirectoryPath; [DataMember] public string Status; [DataMember] public string Message; }
     [DataContract] internal sealed class MoveGraphicTemplatesResult { [DataMember] public string Status; [DataMember] public string TargetDirectoryId; [DataMember] public string TargetDirectoryPath; [DataMember] public int TotalCount; [DataMember] public int MovedCount; [DataMember] public int FailedCount; [DataMember] public List<GraphicTemplateMigrationRecord> Records = new List<GraphicTemplateMigrationRecord>(); }
+    [DataContract] internal sealed class CreateGraphicTemplatesRequest { [DataMember] public string DirectoryId; [DataMember] public string SourceTemplateId; [DataMember] public int RequestedTotalCount; }
+    [DataContract] internal sealed class GraphicTemplateCreationRecord { [DataMember] public int CopyNumber; [DataMember] public string ConfirmedTemplateId; [DataMember] public string Status; [DataMember] public string Message; }
+    [DataContract] internal sealed class CreateGraphicTemplatesResult { [DataMember] public string Status; [DataMember] public string DirectoryId; [DataMember] public string DirectoryPath; [DataMember] public string SourceTemplateId; [DataMember] public string SourceTemplateName; [DataMember] public int RequestedTotalCount; [DataMember] public int OriginalCount; [DataMember] public int CreatedCount; [DataMember] public int ConfirmedFinalCount; [DataMember] public List<GraphicTemplateCreationRecord> Records = new List<GraphicTemplateCreationRecord>(); }
     [DataContract] internal sealed class ValidateAttributeIdsRequest { [DataMember] public List<int> AttributeIds; }
     [DataContract] internal sealed class ValidateAttributeIdsResult { [DataMember] public List<int> ExistingIds; [DataMember] public List<int> MissingIds; }
     [DataContract] internal sealed class ValidateWorksheetAttributeIdsRequest { [DataMember] public List<int> AttributeIds = new List<int>(); }

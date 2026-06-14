@@ -70,3 +70,53 @@ public sealed class MoveGraphicTemplatesResult
     public int FailedCount { get; set; }
     public List<GraphicTemplateMigrationRecord> Records { get; set; } = [];
 }
+
+public sealed class GraphicTemplateBatchRawRow
+{
+    public int ExcelRowNumber { get; set; }
+    public string Sequence { get; set; } = "";
+    public string SourceDirectoryPath { get; set; } = "";
+    public string TemplateName { get; set; } = "";
+    public string TargetDirectoryPath { get; set; } = "";
+}
+
+public sealed class GraphicTemplateBatchPreviewRow
+{
+    public int ExcelRowNumber { get; set; }
+    public string Sequence { get; set; } = "";
+    public string SourceDirectoryPath { get; set; } = "";
+    public string TemplateName { get; set; } = "";
+    public string TargetDirectoryPath { get; set; } = "";
+    public int SourceTemplateMatchCount { get; set; }
+    public string Validation { get; set; } = "";
+    public bool IsValid => Validation == "有效";
+}
+
+public sealed class CreateGraphicTemplatesRequest
+{
+    public string DirectoryId { get; set; } = "";
+    public string SourceTemplateId { get; set; } = "";
+    public int RequestedTotalCount { get; set; }
+}
+
+public sealed class GraphicTemplateCreationRecord
+{
+    public int CopyNumber { get; set; }
+    public string ConfirmedTemplateId { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+}
+
+public sealed class CreateGraphicTemplatesResult
+{
+    public string Status { get; set; } = "";
+    public string DirectoryId { get; set; } = "";
+    public string DirectoryPath { get; set; } = "";
+    public string SourceTemplateId { get; set; } = "";
+    public string SourceTemplateName { get; set; } = "";
+    public int RequestedTotalCount { get; set; }
+    public int OriginalCount { get; set; }
+    public int CreatedCount { get; set; }
+    public int ConfirmedFinalCount { get; set; }
+    public List<GraphicTemplateCreationRecord> Records { get; set; } = [];
+}
