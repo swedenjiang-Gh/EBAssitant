@@ -1,7 +1,9 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Data.SqlClient;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -52,6 +54,10 @@ namespace EBAssistant.Adapter
                 if (operation == "GetGraphicTemplateDirectory") return Write(GetGraphicTemplateDirectory(app, Read<GraphicTemplateDirectoryRequest>()));
                 if (operation == "MoveGraphicTemplates") return Write(MoveGraphicTemplates(app, Read<MoveGraphicTemplatesRequest>()));
                 if (operation == "CreateGraphicTemplates") return Write(CreateGraphicTemplates(app, Read<CreateGraphicTemplatesRequest>()));
+                if (operation == "GetToolPanelConfigurationIdentity") return Write(GetToolPanelConfigurationIdentity(app));
+                if (operation == "GetToolPanelConfigurationTree") return Write(GetToolPanelConfigurationTree(app));
+                if (operation == "GetToolPanelConfigurationDirectory") return Write(GetToolPanelConfigurationDirectory(app, Read<ToolPanelDirectoryRequest>()));
+                if (operation == "AddGraphicTemplatesToToolPanel") return Write(AddGraphicTemplatesToToolPanel(app, Read<AddGraphicTemplatesToToolPanelRequest>()));
                 if (operation == "GetPermissionConfigurationIdentity") return Write(GetPermissionConfigurationIdentity(app));
                 if (operation == "GetPermissionConfigurationStructure") return Write(GetPermissionConfigurationStructure(app));
                 if (operation == "AddPermissionMembers") return Write(AddPermissionMembers(app, Read<PermissionMemberAssignmentRequest>()));
@@ -75,7 +81,10 @@ namespace EBAssistant.Adapter
             {
                 Version = Version,
                 IsActive = app != null,
-                ApplicationName = app == null ? "EB " + Version : Safe(delegate { return app.Name; }, "EB " + Version)
+                ApplicationName = app == null ? "EB " + Version : Safe(delegate { return app.Name; }, "EB " + Version),
+                DatabaseServer = app == null ? "" : Safe(delegate { return app.DatabaseServer; }, ""),
+                DatabaseInstance = app == null ? "" : Safe(delegate { return app.DatabaseInstance; }, ""),
+                Database = app == null ? "" : Safe(delegate { return app.Database; }, "")
             }, app == null ? "未运行" : "已连接");
         }
 
@@ -1714,6 +1723,372 @@ namespace EBAssistant.Adapter
                 : result.CreatedCount > 0 ? "partial" : "failed";
         }
 
+        private static AdapterResponse<ToolPanelConfigurationIdentity> GetToolPanelConfigurationIdentity(EbApplication app)
+        {
+            var root = FindToolPanelConfigurationRoot(app);
+            if (root == null) return Fail<ToolPanelConfigurationIdentity>("无法读取“模板 / 工具面板配置”目录。");
+            return Ok(new ToolPanelConfigurationIdentity
+            {
+                Version = Version,
+                RootId = root.ID,
+                RootName = root.Name
+            }, "工具面板配置身份读取成功。");
+        }
+
+        private static AdapterResponse<ToolPanelConfigurationTreeResult> GetToolPanelConfigurationTree(EbApplication app)
+        {
+            var root = FindToolPanelConfigurationRoot(app);
+            if (root == null) return Fail<ToolPanelConfigurationTreeResult>("无法读取“模板 / 工具面板配置”目录。");
+            var database = TryOpenEbDatabaseConnection(app);
+
+            try
+            {
+                var result = new ToolPanelConfigurationTreeResult
+                {
+                    Identity = new ToolPanelConfigurationIdentity
+                    {
+                        Version = Version,
+                        RootId = root.ID,
+                        RootName = root.Name
+                    }
+                };
+                foreach (object raw in root.Children as IEnumerable)
+                {
+                    var child = raw as ObjectItem;
+                    if (child == null || !IsToolPanelNode(child) || !ExistsInToolPanelDatabase(database, child)) continue;
+                    result.Nodes.Add(ReadToolPanelDirectory(child, "数据库 / 模板 / " + root.Name, database));
+                }
+                return Ok(result, "工具面板配置目录读取成功。");
+            }
+            finally
+            {
+                if (database != null) database.Dispose();
+            }
+        }
+
+        private static ToolPanelDirectoryNode ReadToolPanelDirectory(ObjectItem item, string parentPath, SqlConnection database)
+        {
+            try { item.Refresh(); } catch { }
+            var path = parentPath + " / " + item.Name;
+            var node = new ToolPanelDirectoryNode
+            {
+                Id = item.ID,
+                Name = item.Name,
+                FullPath = path,
+                Kind = item.Kind.ToString(),
+                TypeName = Safe(delegate { return item.TypeName; }, "")
+            };
+            foreach (object raw in item.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child == null || !IsToolPanelNode(child) || !ExistsInToolPanelDatabase(database, child)) continue;
+                node.Children.Add(ReadToolPanelDirectory(child, path, database));
+            }
+            return node;
+        }
+
+        private static AdapterResponse<ToolPanelDirectoryNode> GetToolPanelConfigurationDirectory(
+            EbApplication app,
+            ToolPanelDirectoryRequest request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.DirectoryId))
+                return Fail<ToolPanelDirectoryNode>("工具面板配置目录 ID 不能为空。");
+
+            var root = FindToolPanelConfigurationRoot(app);
+            if (root == null) return Fail<ToolPanelDirectoryNode>("无法读取“模板 / 工具面板配置”目录。");
+            var directory = string.Equals(request.DirectoryId, root.ID, StringComparison.OrdinalIgnoreCase)
+                ? root
+                : app.Utils.GetSnglObjectByID(request.DirectoryId) as ObjectItem;
+            if (directory == null || !IsDescendantOrSelf(root, directory))
+                return Fail<ToolPanelDirectoryNode>("所选工具面板配置目录已不存在，请重新打开窗口后重试。");
+            if (!IsToolPanelNode(directory))
+                return Fail<ToolPanelDirectoryNode>("所选对象不是工具面板配置节点，请重新打开窗口后重试。");
+
+            var path = BuildObjectPath(root, directory, "数据库 / 模板 / " + root.Name);
+            var database = TryOpenEbDatabaseConnection(app);
+            try
+            {
+                return Ok(ReadToolPanelDirectoryShallow(directory, ParentPath(path), database), "工具面板配置目录读取成功。");
+            }
+            finally
+            {
+                if (database != null) database.Dispose();
+            }
+        }
+
+        private static ToolPanelDirectoryNode ReadToolPanelDirectoryShallow(ObjectItem item, string parentPath, SqlConnection database)
+        {
+            try { item.Refresh(); } catch { }
+            var path = string.IsNullOrWhiteSpace(parentPath) ? item.Name : parentPath + " / " + item.Name;
+            var node = new ToolPanelDirectoryNode
+            {
+                Id = item.ID,
+                Name = item.Name,
+                FullPath = path,
+                Kind = item.Kind.ToString(),
+                TypeName = Safe(delegate { return item.TypeName; }, "")
+            };
+            foreach (object raw in item.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child == null || !IsToolPanelNode(child) || !ExistsInToolPanelDatabase(database, child)) continue;
+                node.Children.Add(new ToolPanelDirectoryNode
+                {
+                    Id = child.ID,
+                    Name = child.Name,
+                    FullPath = path + " / " + child.Name,
+                    Kind = child.Kind.ToString(),
+                    TypeName = Safe(delegate { return child.TypeName; }, "")
+                });
+            }
+            return node;
+        }
+
+        private static AdapterResponse<AddGraphicTemplatesToToolPanelResult> AddGraphicTemplatesToToolPanel(
+            EbApplication app,
+            AddGraphicTemplatesToToolPanelRequest request)
+        {
+            var result = new AddGraphicTemplatesToToolPanelResult();
+            if (request == null || string.IsNullOrWhiteSpace(request.TargetDirectoryId) ||
+                request.TemplateIds == null || request.TemplateIds.Count == 0)
+                return FailWithData("添加到工具面板请求无效。", result);
+
+            var root = FindToolPanelConfigurationRoot(app);
+            if (root == null) return FailWithData("无法读取“模板 / 工具面板配置”目录。", result);
+            var target = app.Utils.GetSnglObjectByID(request.TargetDirectoryId) as ObjectItem;
+            if (target == null || !IsDescendantOrSelf(root, target))
+                return FailWithData("所选工具面板目录已不存在，请刷新后重试。", result);
+            if (!IsToolPanelEntry(target))
+                return FailWithData("所选对象不是工具面板条目，请选择 Kind 415 条目后重试。", result);
+
+            result.TargetDirectoryId = target.ID;
+            result.TargetDirectoryPath = BuildObjectPath(root, target, "数据库 / 模板 / " + root.Name);
+            foreach (var templateId in request.TemplateIds.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                result.Records.Add(AddGraphicTemplateToToolPanel(app, target, result.TargetDirectoryPath, templateId));
+            }
+            result.TotalCount = result.Records.Count;
+            result.AddedCount = result.Records.Count(record => record.Status == "added");
+            result.FailedCount = result.TotalCount - result.AddedCount;
+            result.Status = result.FailedCount == 0 ? "completed" : result.AddedCount == 0 ? "failed" : "partial_failed";
+            return result.FailedCount == 0
+                ? Ok(result, "模板图形已添加到工具面板。请重启 EB 后查看生效结果。")
+                : new AdapterResponse<AddGraphicTemplatesToToolPanelResult>
+                {
+                    Success = false,
+                    Message = "部分或全部模板图形添加失败。",
+                    Data = result
+                };
+        }
+
+        private static ToolPanelAdditionRecord AddGraphicTemplateToToolPanel(
+            EbApplication app,
+            ObjectItem target,
+            string targetPath,
+            string templateId)
+        {
+            var record = new ToolPanelAdditionRecord
+            {
+                TemplateId = templateId,
+                TargetDirectoryId = target.ID,
+                TargetDirectoryPath = targetPath
+            };
+            try
+            {
+                var template = app.Utils.GetSnglObjectByID(templateId) as ObjectItem;
+                if (template == null || !IsGraphicTemplateItem(template))
+                    throw new InvalidOperationException("所选对象不是可用的模板图形。");
+                record.TemplateName = template.Name;
+                if (HasToolPanelEntryReference(app, target.ID, template.ID))
+                {
+                    record.ConfirmedObjectId = target.ID;
+                    record.Status = "added";
+                    record.Message = "目标工具面板条目中已存在该模板图形引用，已从数据库按 Role 132 读回确认。";
+                    return record;
+                }
+
+                try { WriteToolPanelTemplateReference(app, target, template); }
+                catch (Exception ex) { throw new InvalidOperationException("创建 Role 132 模板图形引用失败：" + Describe(ex), ex); }
+
+                record.ConfirmedObjectId = target.ID;
+                record.Status = "added";
+                record.Message = "已将模板图形关联到所选 Kind 415 工具面板条目，并从数据库按 Role 132 读回确认。";
+            }
+            catch (Exception ex)
+            {
+                record.Status = "failed";
+                record.Message = Describe(ex);
+            }
+            return record;
+        }
+
+        private static void WriteToolPanelTemplateReference(
+            EbApplication app,
+            ObjectItem entry,
+            ObjectItem template)
+        {
+            var entryOid = ToDatabaseOid(entry.ID);
+            var templateOid = ToDatabaseOid(template.ID);
+            using (var connection = OpenEbDatabaseConnection(app))
+            using (var transaction = connection.BeginTransaction())
+            {
+                const string sql = @"
+IF NOT EXISTS (SELECT 1 FROM dbo.Object WHERE OID=@directory AND CID=414)
+    THROW 51000, '所选工具面板条目的父目录不存在或不是 Kind 414', 1;
+IF NOT EXISTS (SELECT 1 FROM dbo.Object WHERE OID=@entry AND CID=415)
+    THROW 51001, '所选对象不存在或不是 Kind 415 工具面板条目', 1;
+IF NOT EXISTS (SELECT 1 FROM dbo.Object WHERE OID=@template)
+    THROW 51002, '模板图形不存在', 1;
+IF NOT EXISTS (SELECT 1 FROM dbo.Association WHERE OID=@entry AND OIDDest=@template AND Role=132)
+    INSERT dbo.Association (OID,OIDDest,OrderNumber,Role,RoleFlag,h_UserID)
+    SELECT @entry,@template,COALESCE((SELECT MAX(OrderNumber) + 16 FROM dbo.Association WHERE OID=@entry AND Role=132), 80),132,0,h_UserID
+    FROM dbo.Object WHERE OID=@entry;
+IF NOT EXISTS (SELECT 1 FROM dbo.Association WHERE OID=@entry AND OIDDest=@template AND Role=132)
+    THROW 51003, 'Role 132 引用写入后未读回', 1;";
+                using (var command = new SqlCommand(sql, connection, transaction))
+                {
+                    command.Parameters.AddWithValue("@directory", ToDatabaseOid(entry.Parent.ID));
+                    command.Parameters.AddWithValue("@entry", entryOid);
+                    command.Parameters.AddWithValue("@template", templateOid);
+                    command.ExecuteNonQuery();
+                }
+                transaction.Commit();
+            }
+        }
+
+        private static ObjectItem FindToolPanelConfigurationRoot(EbApplication app)
+        {
+            var templates = app.Folders.Templates as ObjectItem;
+            if (templates == null) return null;
+            foreach (object raw in templates.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && string.Equals(child.Name, "工具面板配置", StringComparison.OrdinalIgnoreCase))
+                    return child;
+            }
+            return null;
+        }
+
+        private static bool HasToolPanelDirectoryChildren(ObjectItem item)
+        {
+            foreach (object raw in item.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && IsToolPanelContainer(child)) return true;
+            }
+            return false;
+        }
+
+        private static bool IsToolPanelNode(ObjectItem item)
+        {
+            var kind = (int)item.Kind;
+            return kind == 413 || kind == 414 || kind == 415;
+        }
+
+        private static bool IsToolPanelContainer(ObjectItem item)
+        {
+            var kind = (int)item.Kind;
+            return kind == 413 || kind == 414;
+        }
+
+        private static bool IsToolPanelEntry(ObjectItem item)
+        {
+            return (int)item.Kind == 415;
+        }
+
+        private static bool ExistsInToolPanelDatabase(SqlConnection connection, ObjectItem item)
+        {
+            if (connection == null) return true;
+            using (var command = new SqlCommand("SELECT 1 FROM dbo.Object WHERE OID=@oid AND CID=@cid", connection))
+            {
+                command.Parameters.AddWithValue("@oid", ToDatabaseOid(item.ID));
+                command.Parameters.AddWithValue("@cid", (int)item.Kind);
+                var value = command.ExecuteScalar();
+                return value != null && value != DBNull.Value;
+            }
+        }
+
+        private static bool HasToolPanelEntryReference(EbApplication app, string entryId, string templateId)
+        {
+            using (var connection = OpenEbDatabaseConnection(app))
+            using (var command = new SqlCommand(@"
+SELECT TOP 1 1
+FROM dbo.Object o
+JOIN dbo.Association a ON a.OID=o.OID AND a.OIDDest=@template AND a.Role=132
+WHERE o.OID=@entry AND o.CID=415;", connection))
+            {
+                command.Parameters.AddWithValue("@entry", ToDatabaseOid(entryId));
+                command.Parameters.AddWithValue("@template", ToDatabaseOid(templateId));
+                var value = command.ExecuteScalar();
+                return value != null && value != DBNull.Value;
+            }
+        }
+
+        private static SqlConnection OpenEbDatabaseConnection(EbApplication app)
+        {
+            var server = Safe(delegate { return app.DatabaseServer; }, "");
+            var instance = Safe(delegate { return app.DatabaseInstance; }, "");
+            var database = Safe(delegate { return app.Database; }, "");
+            if (string.IsNullOrWhiteSpace(server)) server = ".";
+            if (string.IsNullOrWhiteSpace(database))
+                throw new InvalidOperationException("当前 EB 未提供数据库名称，无法写入工具面板内部引用。");
+            var dataSource = string.IsNullOrWhiteSpace(instance)
+                ? server
+                : instance.StartsWith(@".\", StringComparison.OrdinalIgnoreCase) ||
+                  instance.IndexOf(@"\", StringComparison.OrdinalIgnoreCase) >= 0
+                    ? instance
+                    : server + @"\" + instance;
+            var connection = new SqlConnection(new SqlConnectionStringBuilder
+            {
+                DataSource = dataSource,
+                InitialCatalog = database,
+                IntegratedSecurity = true,
+                ConnectTimeout = 10,
+                ApplicationName = "EBAssistant"
+            }.ConnectionString);
+            connection.Open();
+            return connection;
+        }
+
+        private static SqlConnection TryOpenEbDatabaseConnection(EbApplication app)
+        {
+            try { return OpenEbDatabaseConnection(app); }
+            catch { return null; }
+        }
+
+        private static long ToDatabaseOid(string objectId)
+        {
+            var separator = objectId == null ? -1 : objectId.LastIndexOf('-');
+            var value = separator < 0 ? objectId : objectId.Substring(separator + 1);
+            if (string.IsNullOrWhiteSpace(value))
+                throw new InvalidOperationException("EB 对象 ID 无法转换为数据库 OID。");
+            return long.Parse(value, NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        }
+
+        private static bool IsDescendantOrSelf(ObjectItem root, ObjectItem item)
+        {
+            var current = item;
+            while (current != null)
+            {
+                if (string.Equals(current.ID, root.ID, StringComparison.OrdinalIgnoreCase)) return true;
+                current = current.Parent;
+            }
+            return false;
+        }
+
+        private static string BuildObjectPath(ObjectItem root, ObjectItem item, string rootPath)
+        {
+            var names = new List<string>();
+            var current = item;
+            while (current != null && !string.Equals(current.ID, root.ID, StringComparison.OrdinalIgnoreCase))
+            {
+                names.Add(current.Name);
+                current = current.Parent;
+            }
+            names.Reverse();
+            return names.Count == 0 ? rootPath : rootPath + " / " + string.Join(" / ", names);
+        }
+
         private static bool IsFolderKind(AucObjectKind kind)
         {
             var name = kind.ToString();
@@ -2532,7 +2907,7 @@ namespace EBAssistant.Adapter
     }
 
     [DataContract] internal sealed class AdapterResponse<T> { [DataMember] public bool Success; [DataMember] public string Message; [DataMember] public T Data; }
-    [DataContract] internal sealed class ConnectionInfo { [DataMember] public string Version; [DataMember] public string ApplicationName; [DataMember] public bool IsActive; }
+    [DataContract] internal sealed class ConnectionInfo { [DataMember] public string Version; [DataMember] public string ApplicationName; [DataMember] public string DatabaseServer; [DataMember] public string DatabaseInstance; [DataMember] public string Database; [DataMember] public bool IsActive; }
     [DataContract] internal sealed class AttributeFolderNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public List<AttributeFolderNode> Children = new List<AttributeFolderNode>(); }
     [DataContract] internal sealed class ExistingAttribute { [DataMember] public string Name; }
     [DataContract] internal sealed class AttributeFolderIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; }
@@ -2562,6 +2937,13 @@ namespace EBAssistant.Adapter
     [DataContract] internal sealed class CreateGraphicTemplatesRequest { [DataMember] public string DirectoryId; [DataMember] public string SourceTemplateId; [DataMember] public int RequestedTotalCount; }
     [DataContract] internal sealed class GraphicTemplateCreationRecord { [DataMember] public int CopyNumber; [DataMember] public string ConfirmedTemplateId; [DataMember] public string Status; [DataMember] public string Message; }
     [DataContract] internal sealed class CreateGraphicTemplatesResult { [DataMember] public string Status; [DataMember] public string DirectoryId; [DataMember] public string DirectoryPath; [DataMember] public string SourceTemplateId; [DataMember] public string SourceTemplateName; [DataMember] public int RequestedTotalCount; [DataMember] public int OriginalCount; [DataMember] public int CreatedCount; [DataMember] public int ConfirmedFinalCount; [DataMember] public List<GraphicTemplateCreationRecord> Records = new List<GraphicTemplateCreationRecord>(); }
+    [DataContract] internal sealed class ToolPanelConfigurationIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; }
+    [DataContract] internal sealed class ToolPanelDirectoryNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public string Kind; [DataMember] public string TypeName; [DataMember] public List<ToolPanelDirectoryNode> Children = new List<ToolPanelDirectoryNode>(); }
+    [DataContract] internal sealed class ToolPanelConfigurationTreeResult { [DataMember] public ToolPanelConfigurationIdentity Identity; [DataMember] public List<ToolPanelDirectoryNode> Nodes = new List<ToolPanelDirectoryNode>(); }
+    [DataContract] internal sealed class ToolPanelDirectoryRequest { [DataMember] public string DirectoryId; }
+    [DataContract] internal sealed class AddGraphicTemplatesToToolPanelRequest { [DataMember] public string TargetDirectoryId; [DataMember] public List<string> TemplateIds = new List<string>(); }
+    [DataContract] internal sealed class ToolPanelAdditionRecord { [DataMember] public string TemplateId; [DataMember] public string TemplateName; [DataMember] public string TargetDirectoryId; [DataMember] public string TargetDirectoryPath; [DataMember] public string ConfirmedObjectId; [DataMember] public string Status; [DataMember] public string Message; }
+    [DataContract] internal sealed class AddGraphicTemplatesToToolPanelResult { [DataMember] public string Status; [DataMember] public string TargetDirectoryId; [DataMember] public string TargetDirectoryPath; [DataMember] public int TotalCount; [DataMember] public int AddedCount; [DataMember] public int FailedCount; [DataMember] public List<ToolPanelAdditionRecord> Records = new List<ToolPanelAdditionRecord>(); }
     [DataContract] internal sealed class ValidateAttributeIdsRequest { [DataMember] public List<int> AttributeIds; }
     [DataContract] internal sealed class ValidateAttributeIdsResult { [DataMember] public List<int> ExistingIds; [DataMember] public List<int> MissingIds; }
     [DataContract] internal sealed class ValidateWorksheetAttributeIdsRequest { [DataMember] public List<int> AttributeIds = new List<int>(); }

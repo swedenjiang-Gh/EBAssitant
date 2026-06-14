@@ -65,24 +65,18 @@ public sealed class GraphicTemplatesForm : Form
             return;
         }
 
-        var identityResponse = await _client.GetGraphicTemplateIdentityAsync();
-        if (!identityResponse.Success || identityResponse.Data is null)
+        var shared = await GraphicTemplateSharedLoader.LoadAsync(_client);
+        if (!shared.Success || shared.Identity is null || shared.Tree is null)
         {
-            SetBusy(false, identityResponse.Message);
-            MessageBox.Show(this, identityResponse.Message, "图形模板", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            SetBusy(false, shared.Message);
+            MessageBox.Show(this, shared.Message, "图形模板", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
 
-        _identity = identityResponse.Data;
-        _cache = GraphicTemplateCache.Load(_identity);
-        if (_cache is not null)
-        {
-            DisplayTree(_cache, null);
-            SetBusy(false, $"已从缓存加载图形模板目录，共 {_tree.GetNodeCount(true)} 个目录。");
-            return;
-        }
-
-        await LoadAllFromEbAsync();
+        _identity = shared.Identity;
+        _cache = shared.Tree;
+        DisplayTree(_cache, null);
+        SetBusy(false, $"{shared.Message} 共 {_tree.GetNodeCount(true)} 个目录。");
     }
 
     private EbAdapterClient? SelectAdapter(List<EbAdapterClient> active)

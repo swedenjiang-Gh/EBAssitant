@@ -2,14 +2,6 @@ namespace EBAssistant;
 
 public sealed class MainForm : Form
 {
-    private static readonly string[] ExcelTemplateNames =
-    [
-        "创建属性模板.xlsx",
-        "类型定义模板.xlsx",
-        "工作表模板.xlsx",
-        "权限配置模板.xlsx"
-    ];
-
     private readonly Label _statusLabel;
     private readonly List<Form> _openWindows = [];
 
@@ -113,19 +105,21 @@ public sealed class MainForm : Form
         aboutMenu.DropDownItems.Add(helpItem);
         aboutMenu.DropDownItems.Add(versionItem);
 
+        var logMenu = new ToolStripMenuItem("日志");
+        logMenu.Click += (_, _) => OpenLogFolder();
+
         menuStrip.Items.Add(fileMenu);
+        menuStrip.Items.Add(logMenu);
         menuStrip.Items.Add(aboutMenu);
         return menuStrip;
     }
 
     private void DownloadExcelTemplates()
     {
-        var missing = ExcelTemplateNames
-            .Where(name => !File.Exists(GetTemplatePath(name)))
-            .ToList();
-        if (missing.Count > 0)
+        var templates = GetExcelTemplatePaths();
+        if (templates.Count == 0)
         {
-            MessageBox.Show(this, $"模板文件缺失：{string.Join("、", missing)}", "下载模板", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, "Templates 目录下未找到 Excel 模板文件。", "下载模板", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
 
@@ -136,8 +130,9 @@ public sealed class MainForm : Form
         };
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
 
-        var existing = ExcelTemplateNames
-            .Where(name => File.Exists(Path.Combine(dialog.SelectedPath, name)))
+        var existing = templates
+            .Select(Path.GetFileName)
+            .Where(name => !string.IsNullOrWhiteSpace(name) && File.Exists(Path.Combine(dialog.SelectedPath, name)))
             .ToList();
         var overwrite = false;
         if (existing.Count > 0)
@@ -153,11 +148,12 @@ public sealed class MainForm : Form
         }
 
         var copied = new List<string>();
-        foreach (var name in ExcelTemplateNames)
+        foreach (var source in templates)
         {
+            var name = Path.GetFileName(source);
             var target = Path.Combine(dialog.SelectedPath, name);
             if (File.Exists(target) && !overwrite) continue;
-            File.Copy(GetTemplatePath(name), target, overwrite);
+            File.Copy(source, target, overwrite);
             copied.Add(name);
         }
 
@@ -194,9 +190,54 @@ public sealed class MainForm : Form
         MessageBox.Show(this, text, "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
+    private void OpenLogFolder()
+    {
+        var directory = GetLogsDirectory();
+        try
+        {
+            Directory.CreateDirectory(directory);
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = directory,
+                UseShellExecute = true
+            });
+            _statusLabel.Text = $"已打开日志目录：{directory}";
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, $"无法打开日志目录：{ex.Message}", "日志", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
     private static string GetTemplatePath(string fileName)
     {
-        return Path.Combine(AppContext.BaseDirectory, "Templates", fileName);
+        return Path.Combine(GetTemplatesDirectory(), fileName);
+    }
+
+    private static string GetTemplatesDirectory()
+    {
+        return Path.Combine(AppContext.BaseDirectory, "Templates");
+    }
+
+    private static List<string> GetExcelTemplatePaths()
+    {
+        var directory = GetTemplatesDirectory();
+        if (!Directory.Exists(directory)) return [];
+
+        return Directory.EnumerateFiles(directory)
+            .Where(path =>
+                string.Equals(Path.GetExtension(path), ".xlsx", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(Path.GetExtension(path), ".xls", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(path => Path.GetFileName(path), StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static string GetLogsDirectory()
+    {
+        return Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "EBAssistant",
+            "Logs");
     }
 
     private Button CreateFunctionButton(string functionName)
@@ -257,6 +298,15 @@ public sealed class MainForm : Form
         if (functionName == "图形模板" || functionName == "鍥惧舰妯℃澘")
         {
             var form = new GraphicTemplatesForm();
+            _openWindows.Add(form);
+            form.FormClosed += (_, _) => _openWindows.Remove(form);
+            form.Show();
+            return;
+        }
+
+        if (functionName == "工具面板配置" || functionName == "宸ュ叿闈㈡澘閰嶇疆")
+        {
+            var form = new ToolPanelConfigurationForm();
             _openWindows.Add(form);
             form.FormClosed += (_, _) => _openWindows.Remove(form);
             form.Show();

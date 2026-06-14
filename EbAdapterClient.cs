@@ -99,6 +99,21 @@ public sealed class EbAdapterClient
     public Task<AdapterResponse<CreateGraphicTemplatesResult>> CreateGraphicTemplatesAsync(CreateGraphicTemplatesRequest request) =>
         InvokeAsync<CreateGraphicTemplatesResult>(_adapterPath, "CreateGraphicTemplates", request);
 
+    public Task<AdapterResponse<ToolPanelConfigurationIdentity>> GetToolPanelConfigurationIdentityAsync() =>
+        InvokeAsync<ToolPanelConfigurationIdentity>(_adapterPath, "GetToolPanelConfigurationIdentity", null);
+
+    public Task<AdapterResponse<ToolPanelConfigurationTreeResult>> GetToolPanelConfigurationTreeAsync() =>
+        InvokeAsync<ToolPanelConfigurationTreeResult>(_adapterPath, "GetToolPanelConfigurationTree", null);
+
+    public Task<AdapterResponse<ToolPanelDirectoryNode>> GetToolPanelConfigurationDirectoryAsync(string directoryId) =>
+        InvokeAsync<ToolPanelDirectoryNode>(
+            _adapterPath,
+            "GetToolPanelConfigurationDirectory",
+            new ToolPanelDirectoryRequest { DirectoryId = directoryId });
+
+    public Task<AdapterResponse<AddGraphicTemplatesToToolPanelResult>> AddGraphicTemplatesToToolPanelAsync(AddGraphicTemplatesToToolPanelRequest request) =>
+        InvokeAsync<AddGraphicTemplatesToToolPanelResult>(_adapterPath, "AddGraphicTemplatesToToolPanel", request);
+
     public Task<AdapterResponse<PermissionConfigurationIdentity>> GetPermissionConfigurationIdentityAsync() =>
         InvokeAsync<PermissionConfigurationIdentity>(_adapterPath, "GetPermissionConfigurationIdentity", null);
 

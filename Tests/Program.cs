@@ -19,7 +19,8 @@ internal static class Program
             WorksheetPreparationTests.Run();
             PermissionAssignmentSelectionTests.Run();
             PermissionAssignmentResultTests.Run();
-            Console.WriteLine("PASS: 13 test groups");
+            ToolPanelConfigurationTests.Run();
+            Console.WriteLine("PASS: 14 test groups");
             return 0;
         }
         catch (Exception exception)

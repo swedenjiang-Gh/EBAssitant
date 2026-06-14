@@ -13,6 +13,9 @@ public sealed class ConnectionInfo
 {
     public string Version { get; set; } = "";
     public string ApplicationName { get; set; } = "";
+    public string DatabaseServer { get; set; } = "";
+    public string DatabaseInstance { get; set; } = "";
+    public string Database { get; set; } = "";
     public bool IsActive { get; set; }
 }
 
