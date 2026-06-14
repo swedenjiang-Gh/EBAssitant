@@ -1,16 +1,17 @@
 # EBAssistant 项目说明
+
 ## 0. 设计规则
 
-读取的目录结构均要保存缓存，以便下次直接读取，只有用户刷新才重新读取并更新缓存。
+读取的目录结构均要保存缓存，以便下次直接读取；只有用户刷新时才重新读取并更新缓存。
 导入的数据需要做只读预览。
-每个任务完成后都要给用户展示结果、保存日志并提供日志路径按钮。
-兄弟文件夹EngineeringBaseCodemap是知识库，可供开发参考。
+涉及 EB 写入的任务完成后，都要给用户展示结果、保存日志并提供日志路径入口。
+兄弟文件夹 `EngineeringBaseCodemap` 是知识库，可供开发参考，但不要把它的治理体系搬进本桌面程序。
 
 ## 1. 项目定位
 
-EBAssistant 是一个面向 Aucotec Engineering Base（EB）的 Windows 桌面辅助工具，使用 C# 和 Windows Forms 开发。
+EBAssistant 是面向 Aucotec Engineering Base（EB）的 Windows 桌面辅助工具，使用 C# 和 Windows Forms 开发。
 
-主界面包含六个功能入口：
+主界面包含六个功能入口，当前六个入口均已接入实际功能窗口：
 
 - 属性
 - 类型定义
@@ -19,7 +20,12 @@ EBAssistant 是一个面向 Aucotec Engineering Base（EB）的 Windows 桌面�
 - 图形模板
 - 工具面板配置
 
-当前已经实现“属性”“类型定义”和“工作表”。其余三个入口目前只显示“将在后续开发中实现”的提示。
+主界面还包含：
+
+- 文件 / 下载模板：扫描输出目录 `Templates` 下所有 `.xlsx` 和 `.xls` 文件并复制给用户。
+- 文件 / 日志：打开 `%LOCALAPPDATA%\EBAssistant\Logs`。
+- 关于 / 帮助：打开 `Templates\帮助手册.pdf`。
+- 关于 / 版本信息：读取 `Templates\版本信息.txt`。
 
 ## 2. 目录与技术栈
 
@@ -29,13 +35,13 @@ EBAssistant 是一个面向 Aucotec Engineering Base（EB）的 Windows 桌面�
 
 - 主程序：WinForms、`net10.0-windows`、x86
 - EB 2023/2024 适配器：强类型 Aucotec COM Reference、`.NET Framework 4.6.2`、x86
-- EB 2025 适配器：`net462` 占位程序；当前不会连接 COM 32
+- EB 2025 适配器：`net462` 占位程序；当前明确报错，不连接 COM
 - Excel：`ExcelDataReader`
 - 主程序与适配器通信：标准输入/标准输出 JSON
 - 主命名空间：`EBAssistant`
 - COM 适配器命名空间：`EBAssistant.Adapter`
 
-主程序通过 `EBAssistant.csproj` 排除 `Adapters/**/*.cs`，适配器需要独立构建，不能直接编译进 WinForms 主程序。
+主程序通过 `EBAssistant.csproj` 排除 `Adapters/**/*.cs`，适配器独立构建，不能直接编译进 WinForms 主程序。
 
 ## 3. 核心架构
 
@@ -46,7 +52,7 @@ EBAssistant 是一个面向 Aucotec Engineering Base（EB）的 Windows 桌面�
 `MainForm`：
 
 - 窗口标题为 `EB Assistant`。
-- “属性”“类型定义”和“工作表”使用 `Form.Show()` 打开独立非模态窗口。
+- 六个功能入口均使用 `Form.Show()` 打开独立非模态窗口。
 - 主界面和已打开的功能窗口可以同时操作。
 - `_openWindows` 用于持有功能窗口引用，避免窗口被提前回收。
 
@@ -82,9 +88,9 @@ EB 2023 和 2024 共用 `Adapters/AdapterProgram.cs`，通过编译常量区分�
 
 - `GetConnectionInfo`
 - `GetAttributeFolderTree`
+- `GetAttributeFolderIdentity`
 - `CreateAttributes`
 - `CreateAttributeFolder`
-- `DeleteEmptyAttributeFolder`
 - `GetTypeDefinitionIdentity`
 - `GetTypeDefinitionTree`
 - `ValidateAttributeIds`
@@ -93,7 +99,20 @@ EB 2023 和 2024 共用 `Adapters/AdapterProgram.cs`，通过编译常量区分�
 - `GetProjectTemplateTree`
 - `ValidateWorksheetAttributeIds`
 - `GetWorksheetCreationContext`
+- `ValidateWorksheetCreationCapability`
 - `CreateWorksheets`
+- `GetPermissionConfigurationIdentity`
+- `GetPermissionConfigurationStructure`
+- `AddPermissionMembers`
+- `GetGraphicTemplateIdentity`
+- `GetGraphicTemplateTree`
+- `GetGraphicTemplateDirectory`
+- `MoveGraphicTemplates`
+- `CreateGraphicTemplates`
+- `GetToolPanelConfigurationIdentity`
+- `GetToolPanelConfigurationTree`
+- `GetToolPanelConfigurationDirectory`
+- `AddGraphicTemplatesToToolPanel`
 
 ## 4. “属性”功能
 
@@ -119,8 +138,6 @@ EB 2023 和 2024 共用 `Adapters/AdapterProgram.cs`，通过编译常量区分�
 - 通过 AID 5 设置目录名称。
 - `Store()` 后重新枚举父目录并读回确认。
 - 创建失败时尽力删除新建对象。
-
-适配器还实现了 `DeleteEmptyAttributeFolder`，但当前主程序客户端和界面没有暴露删除目录入口。
 
 ### 4.3 批量创建属性
 
@@ -238,7 +255,159 @@ AID 校验同时使用：
 
 `%LOCALAPPDATA%\EBAssistant\Logs\TypeDefinitions`
 
-## 6. 数据模型与协议
+## 6. “工作表”功能
+
+入口文件：
+
+- `ProjectTemplatesForm.cs`
+- `CreateWorksheetsForm.cs`
+- `WorksheetPreparation.cs`
+- `WorksheetCreationLogWriter.cs`
+- `WorksheetCreationResultForm.cs`
+- `WorksheetModels.cs`
+
+行为：
+
+- 项目模板树来自 `Application.Folders.ProjectTemplates`。
+- 缓存按“EB 版本 + 项目模板根目录 ID”隔离。
+- 树默认折叠。
+- 只有用户点击“刷新”才重新读取 EB 并覆盖缓存。
+- 只有模板项目节点允许右键“新建工作表”。
+- 新建工作表窗口支持 `.xlsx` 和 `.xls` 导入、只读预览、AID 校验和最终名称预览。
+- 每个 Excel 页签对应一个 EB 工作表。
+- 第一列忽略；从第二列开始，每列对应工作表中的一列。
+- 第一行是列标签预览，只用于预览、列宽计算和日志。
+- 第二行是属性 ID。
+- 工作表对象类型当前固定为器件。
+
+正式写入路径：
+
+1. 重新解析所选模板项目。
+2. 使用该项目自己的 `EquipmentFolder.OpenWorksheetDirect(...)` 创建器件工作表。
+3. 调用 `Worksheet.Attributes.Add(...)` 添加列。
+4. 设置 `WorksheetAttribute.Width` 和 `Worksheet.ProtectColumnWidth`。
+5. 保存到同一项目 `Project.WorksheetTemplatesFolder` 下唯一 `aucObjFavoriteListConfigurations`。
+6. 从收藏夹读回确认。
+
+工作表保存位置显示为：
+
+`项目模板 / 所选模板项目 / 工作表 / 收藏夹`
+
+自定义列标签暂不实现。正式 `CreateWorksheets` 不调用 `aucCmdEditColumnLabel`，不做 UI Automation，也不写数据库内部表。
+
+日志目录：
+
+`%LOCALAPPDATA%\EBAssistant\Logs\Worksheets`
+
+## 7. “权限配置”功能
+
+入口文件：
+
+- `PermissionConfigurationForm.cs`
+- `PermissionConfigurationCache.cs`
+- `PermissionConfigurationLogWriter.cs`
+- `PermissionAssignmentPreviewForm.cs`
+- `PermissionAssignmentResultForm.cs`
+
+行为：
+
+- 读取并缓存 EB 权限配置结构、用户和用户组。
+- 缓存按“EB 版本 + 权限配置根目录 ID”隔离。
+- 支持选择权限目录、用户和用户组。
+- 写入前展示预览和确认。
+- 当前写入语义是把选中的用户或用户组添加到选中的权限目录中。
+- 当前不设置具体权限位。
+- 写入后读回确认，区分 `added`、`skipped_existing`、`failed`。
+- 每次操作保存 JSON/TXT 日志并展示结果。
+
+日志目录：
+
+`%LOCALAPPDATA%\EBAssistant\Logs\PermissionConfiguration`
+
+边界：
+
+- `permission.read` 已有确认路径。
+- 当前实现是成员添加，不是完整权限位配置。
+- 后续如要写具体权限位，必须先做受控验证，不能直接推广现有成员添加逻辑。
+
+## 8. “图形模板”功能
+
+入口文件：
+
+- `GraphicTemplatesForm.cs`
+- `GraphicTemplateCache.cs`
+- `GraphicTemplateMigrationLogWriter.cs`
+- `GraphicTemplateMigrationResultForm.cs`
+- `GraphicTemplateCreationLogWriter.cs`
+- `GraphicTemplateCreationResultForm.cs`
+- `GraphicTemplateBatchMigrationForm.cs`
+- `GraphicTemplateBatchExcelImporter.cs`
+
+行为：
+
+- 图形模板根目录来自 `app.Folders.Stencils`。
+- 左侧显示图形模板目录树，右侧显示所选目录下的模板图形。
+- 缓存按“EB 版本 + 图形模板根目录 ID”隔离。
+- 初次无缓存时完整读取，存在缓存时直接加载。
+- “刷新”只浅层刷新当前所选目录，不全树重读。
+
+已实现写入：
+
+- 勾选模板图形后复制到目标末级目录，源对象保留。
+- 使用 EB 命令 `aucCmdSymCopy` 和 `aucCmdSymPaste`。
+- 复制后通过目标目录新增对象 ID 读回确认。
+- 遇到已白名单化的“图形符号类型与图形模板类型不匹配”确认框时，优先用 Win32 对话框识别并点击“确定”；未知对话框不自动处理。
+- “新建模板图形”要求当前末级目录中恰好存在一个模板图形，按该模板补齐到用户输入的总数量。
+- 新建模板图形已成功部分保留，不回滚、不删除。
+
+按表格迁移：
+
+- 支持导入 `Templates/迁移模板图形模板.xlsx` 做只读预览。
+- 当前只校验源目录、目标目录、末级目录状态和同名模板匹配数量。
+- 当前“确定”不执行实际迁移。
+
+日志目录：
+
+`%LOCALAPPDATA%\EBAssistant\Logs\GraphicTemplates`
+
+边界：
+
+- 当前语义是复制，不删除源对象。
+- 跨大类复制仍是不稳定或未确认能力，不能写成已支持。
+- 不尝试未经验证的底层类型转换。
+
+## 9. “工具面板配置”功能
+
+入口文件：
+
+- `ToolPanelConfigurationForm.cs`
+- `ToolPanelConfigurationCache.cs`
+- `ToolPanelConfigurationLogWriter.cs`
+- `ToolPanelConfigurationResultForm.cs`
+
+行为：
+
+- 左侧和中间复用图形模板目录缓存与模板图形读取逻辑。
+- 右侧读取并缓存 `数据库 / 模板 / 工具面板配置` 下的目录和条目。
+- 右侧树显示 `Kind 413 / 414 / 415`。
+- 只有选中已有 `Kind 415` 条目时才能执行“添加到工具面板”。
+- 当前语义是把选中的图形模板关联到已有工具面板配置条目。
+- 不复制模板图形，不移动模板图形，不新建 `Kind 415` 条目。
+- 当前 EB2023 实现依据为数据库关联：`Kind 415` 条目通过 `Role 132` 指向真实图形模板对象。
+- 写入后必须读回确认。
+- 添加成功后提示用户重启 EB，因为 EB 当前进程可能缓存工具面板配置。
+
+日志目录：
+
+`%LOCALAPPDATA%\EBAssistant\Logs\ToolPanelConfiguration`
+
+边界：
+
+- 不得删除用户已有的非目标面板。
+- 不要把图形模板迁移逻辑复用成工具面板配置写入逻辑。
+- 后续扩展前必须先确认目标对象是目录、`Kind 415` 条目，还是模板图形引用关系。
+
+## 10. 数据模型与协议
 
 共享主程序模型集中在 `Models.cs`。
 
@@ -248,7 +417,7 @@ AID 校验同时使用：
 
 主程序使用 `System.Text.Json`；适配器使用 `DataContractJsonSerializer`。
 
-## 7. 构建与运行
+## 11. 构建、运行与验证
 
 主程序构建：
 
@@ -256,37 +425,48 @@ AID 校验同时使用：
 dotnet build .\EBAssistant.csproj
 ```
 
-完整构建设计入口：
+完整构建入口：
 
 ```powershell
-.\build.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-`build.ps1` 的设计意图是：
+测试入口：
+
+```powershell
+dotnet run --project .\Tests\EBAssistant.Tests.csproj
+```
+
+当前完整构建会：
 
 1. 使用 `dotnet build` 构建主程序。
-2. 使用 Visual Studio MSBuild 构建 EB 2023/2024 的旧式 `.NET Framework` COM 项目。
+2. 使用 Visual Studio MSBuild 构建 EB 2023/2024 的 `.NET Framework` COM 适配器。
 3. 使用 `dotnet build` 构建 EB 2025 占位适配器。
 
-主程序输出目标为：
+主程序输出目标：
 
 `bin\Debug\net10.0-windows\EBAssistant.exe`
 
-## 8. 当前已知不一致与风险
+适配器输出目标：
 
-继续开发前应优先核对以下内容：
+- `bin\Debug\net10.0-windows\Adapters\2023\EBAssistant.Adapter2023.exe`
+- `bin\Debug\net10.0-windows\Adapters\2024\EBAssistant.Adapter2024.exe`
+- `bin\Debug\net10.0-windows\Adapters\2025\EBAssistant.Adapter2025.exe`
 
-1. `build.ps1` 引用的适配器项目名是 `EBAssistant.Adapter2023/2024/2025.csproj`，但目录内实际文件名仍是 `EBAssist.Adapter2023/2024/2025.csproj`。
-2. 适配器项目内部的 `AssemblyName`、`RootNamespace` 和输出文件名仍使用 `EBAssist.Adapter...`，但 `EbAdapterClient` 查找的是 `EBAssistant.Adapter...exe`。
-3. EB 2023/2024/2025 适配器的 `OutputPath` 仍指向 `net9.0-windows`，而主程序当前目标和输出目录是 `net10.0-windows`。
-4. `README.md` 标题仍为 `EBAssist`，且内容没有完全反映当前 `EBAssistant` 命名和 `net10.0-windows` 状态。
-5. 当前没有独立测试项目；验证主要依赖构建和真实 EB 环境中的手动或适配器调用测试。
-6. EB 2025 目前只是明确报错的占位适配器，不支持实际连接。
-7. 属性窗口和类型定义窗口在多个活动 EB 场景中的版本选择行为不一致。
+注意：如果 `EBAssistant.exe` 或 adapter EXE 正在运行，构建可能因文件锁失败。验证前先关闭正在运行的本程序和卡住的 adapter 进程。
 
-这些问题是通读代码后发现的当前状态；不要在未验证实际构建输出和用户意图前擅自假设它们已经修复。
+## 12. 当前已知边界与风险
 
-## 9. 开发约束与建议
+1. EB 2025 目前只是明确报错的占位适配器，不支持实际连接。
+2. 属性窗口和类型定义窗口在多个活动 EB 场景中的版本选择行为不一致。
+3. 工作表列标签编辑暂不实现；此前 SQL 内部表路线只属于人工批准的受控诊断修复路线。
+4. 权限配置当前只添加成员，不设置具体权限位。
+5. 图形模板“按表格迁移”当前只做导入预览，不执行批量迁移写入。
+6. 图形模板跨大类复制仍是不稳定或未确认能力。
+7. 工具面板配置当前通过 `Role 132` 数据库关联实现；扩展前必须重新确认 EB 版本和目标对象边界。
+8. 当前自动测试覆盖导入、预览、日志、缓存和部分协议逻辑；真实 EB 写入验证只能在受控数据库中执行，不能默认在用户生产数据库中试写。
+
+## 13. 开发约束与建议
 
 - 保持所有 EB COM 代码在版本适配器中，主程序不要直接引用 Aucotec COM。
 - 不要使用 `dynamic` 操作 EB COM 对象。
@@ -298,12 +478,12 @@ dotnet build .\EBAssistant.csproj
 - 不要删除或覆盖用户已有的 EB 数据。
 - 所有窗口继续使用非模态方式打开，除非窗口本身是输入或选择对话框。
 - 新增中文文本文件时使用 UTF-8 无 BOM，避免通过可能改变编码的 PowerShell 文本管道批量重写源码。
-- 修改类型定义树结构后应提升 `TypeDefinitionCache.ProtocolVersion`，使旧缓存自动失效。
+- 修改缓存结构后应提升对应缓存 `ProtocolVersion`，使旧缓存自动失效。
 
-## 10. 快速文件索引
+## 14. 快速文件索引
 
 - `Program.cs`：应用入口
-- `MainForm.cs`：主界面及六个功能入口
+- `MainForm.cs`：主界面、菜单和六个功能入口
 - `EbAdapterClient.cs`：适配器发现、进程调用和 JSON 通信
 - `Models.cs`：主程序共享协议模型
 - `AttributeFoldersForm.cs`：属性目录树、刷新和右键菜单
@@ -313,18 +493,26 @@ dotnet build .\EBAssistant.csproj
 - `TypeDefinitionsForm.cs`：类型定义树、缓存加载和复选联动
 - `TypeDefinitionDialogForm.cs`：定义对话框批量配置界面
 - `DialogDefinitionExcelImporter.cs`：定义对话框 Excel 读取与校验
-- `TypeDefinitionCache.cs`：类型定义树缓存
-- `TypeDefinitionLogWriter.cs`：类型定义操作日志
-- `TypeDefinitionResultForm.cs`：类型定义操作结果展示
+- `ProjectTemplatesForm.cs`：项目模板树和工作表入口
+- `CreateWorksheetsForm.cs`：Excel 批量创建工作表界面
+- `PermissionConfigurationForm.cs`：权限配置读取和成员添加
+- `GraphicTemplatesForm.cs`：图形模板读取、复制、新建和批量预览入口
+- `ToolPanelConfigurationForm.cs`：工具面板配置关联写入
 - `Adapters/AdapterProgram.cs`：EB 2023/2024 强类型 COM 核心实现
 - `Adapters/2025/Program.cs`：EB 2025 占位适配器
 - `build.ps1`：完整构建入口
+- `Tests/EBAssistant.Tests.csproj`：轻量自动测试入口
+- `Templates/`：Excel 模板、帮助文档和版本信息
+- `docs/操作手册.md`：用户操作手册
+- `README.md`：项目总览
+- `docs/worksheet-development-handoff.md`：工作表功能最终路线、失败路径和交接
+- `docs/engineering-base-automation-lessons-from-codex-dialog.md`：EB 自动化通用经验、列标签诊断边界和受控路线
 
-## 11. EngineeringBaseCodemap 可借鉴知识
+## 15. EngineeringBaseCodemap 可借鉴知识
 
 兄弟目录 `../EngineeringBaseCodemap` 是 EB API 验证、能力边界和真实运行证据知识库。开发 EBAssistant 时应优先查询其中已经验证的知识，但不要把其 Harness、MCP、Gateway、feature list 等治理结构直接搬入本桌面程序。
 
-### 11.1 推荐查询顺序
+### 15.1 推荐查询顺序
 
 遇到 EB API、对象类型、写入行为或版本兼容性问题时，按以下顺序查询：
 
@@ -336,15 +524,9 @@ dotnet build .\EBAssistant.csproj
 
 只把 `confirmed` 或明确版本适用的结论当作实现依据。`partial`、`failed`、`unverified` 只能用于说明边界或设计后续验证。
 
-### 11.2 当前功能可直接借鉴的确认结论
+### 15.2 已确认的公共 EB API 配方
 
-兄弟项目已经用真实 EB 运行验证以下能力：
-
-- EB2024 / COM 31：属性定义创建、TypeItem 关联、解除关联、定义删除，以及类型定义对话框选项卡关联。
-- EB2023 / COM 30：同样确认属性定义创建、TypeItem 关联、解除关联、定义删除和类型定义对话框关联。
-- EB2023/2024 均确认属性定义 AID 5 名称和 AID 25 注释可以修改、读回和恢复。
-
-确认的公共 API 配方：
+属性定义与类型定义对话框相关的确认配方：
 
 ```text
 AttributesFolder.NewAttribute(...)
@@ -366,18 +548,28 @@ ObjectItem.Delete(false, aucDeleteTStandard)
 - `Application.Dialogs.Properties` 等交互式对话框不是已确认的自动化写入路径。
 - 管理员模式/类型定义写入属于高影响数据库结构写入，不能无人值守执行。
 
-相关权威记录：
+工作表确认配方：
 
-- `../EngineeringBaseCodemap/harness/knowledge/validated/platforms/engineering-base/KR-0069-eb2024-com31-attribute-definition-write.json`
-- `../EngineeringBaseCodemap/harness/knowledge/validated/platforms/engineering-base/KR-0070-eb2024-com31-type-definition-dialog-edit.json`
-- `../EngineeringBaseCodemap/harness/knowledge/validated/platforms/engineering-base/KR-0080-eb2023-com30-attribute-definition-write.json`
-- `../EngineeringBaseCodemap/harness/knowledge/validated/platforms/engineering-base/KR-0081-eb2023-com30-type-definition-dialog-edit.json`
-- `../EngineeringBaseCodemap/docs/codemap-cards/platforms/engineering-base/OOE-039.attribute-definition-write.md`
-- `../EngineeringBaseCodemap/docs/codemap-cards/platforms/engineering-base/OOE-040.type-definition-dialog-edit.md`
+```text
+Project.WorksheetTemplatesFolder
+EquipmentFolder.OpenWorksheetDirect(...)
+Worksheet.Attributes.Add(...)
+WorksheetAttribute.Width
+Worksheet.ProtectColumnWidth
+Worksheet.SaveConfiguration(...)
+从收藏夹读回确认
+```
 
-### 11.3 启动、连接和构建可借鉴规则
+工具面板配置当前实现边界：
 
-兄弟项目确认或要求：
+```text
+Kind 415 工具面板条目
+Role 132 -> 图形模板对象
+写入后读回确认
+成功后提示重启 EB
+```
+
+### 15.3 启动、连接和构建可借鉴规则
 
 - EB COM 项目使用 `net462`、x86 和对应版本 Aucotec COM Reference。
 - 禁止使用 C# `dynamic` 访问 EB COM。
@@ -386,19 +578,9 @@ ObjectItem.Delete(false, aucDeleteTStandard)
 - EB 自动启动后可能需要分钟级等待 `Application.Name` / `Folders` 就绪，短超时不能证明 API 不可用。
 - 控制台适配器输出使用 UTF-8 无 BOM 和结构化 JSON。
 
-启动策略需要结合 EBAssistant 的产品语义区别处理：
+EBAssistant 当前产品语义是“连接用户正在运行的 EB”，因此应优先附着活动实例。不应因为附着失败就静默启动新的 EB；任何创建新 Application 的回退都必须防止反复启动，并等待就绪后再使用。
 
-- 通用自动化工具若允许启动 EB，可优先强类型 `new Application()`，随后长等待，并保留 `GetActiveObject` 回退。
-- EBAssistant 的当前需求是“连接用户正在运行的 EB”，因此应优先附着活动实例。
-- 不应因为附着失败就静默启动新的 EB；任何创建新 Application 的回退都必须防止反复启动，并等待就绪后再使用。
-
-开发前可参考：
-
-- `../EngineeringBaseCodemap/docs/codemap-cards/platforms/engineering-base/OOE-000.developer-setup.md`
-- `../EngineeringBaseCodemap/harness/knowledge/validated/platforms/engineering-base/KR-0052-eb2024-com31-developer-setup.json`
-- `../EngineeringBaseCodemap/harness/knowledge/validated/platforms/engineering-base/KR-0007-eb2024-com31-automation-startup.json`
-
-### 11.4 写入安全与验证策略
+### 15.4 写入安全与验证策略
 
 可借鉴兄弟项目的“操作、读回、清理、再读回”闭环：
 
@@ -411,38 +593,17 @@ ObjectItem.Delete(false, aucDeleteTStandard)
 
 UndoScope 可以作为额外保护，但不能作为唯一清理手段。兄弟项目的管理员属性定义验证曾遇到 UndoScope 无法开启的场景，最终依赖 `TypeItem.Attributes.Remove`、`ObjectItem.Delete` 和清理读回完成闭环。
 
-EBAssistant 当前批量创建属性已经具备失败回滚；类型定义批量关联按需求保留此前成功结果。以后扩展这两条路径时，应保持其不同失败策略清晰，不要混用。
+EBAssistant 当前不同写入路径的失败策略不同：
 
-### 11.5 后续四个功能入口的已知能力边界
+- 批量创建属性：中途失败时停止，并尽力删除本批已创建属性。
+- 类型定义批量关联：任一写入失败时停止后续操作，已成功的写入保留。
+- 工作表批量创建：单个工作表失败后继续其他有效工作表。
+- 图形模板复制/新建：已成功创建的对象保留，不做批量删除。
+- 权限成员添加和工具面板关联：逐项记录成功、跳过或失败，写入后读回确认。
 
-#### 工作表
+以后扩展这些路径时，应保持各自失败策略清晰，不要混用。
 
-- 项目模板树来自 `Application.Folders.ProjectTemplates`，按“EB 版本 + 根目录 ID”缓存；只有用户点击“刷新”才重读。
-- 工作表配置保存位置使用所选项目的 `Project.WorksheetTemplatesFolder` 下唯一 `aucObjFavoriteListConfigurations`，显示路径为 `/工作表/收藏夹`。
-- 创建工作表时必须使用同一个所选项目自己的 `EquipmentFolder.OpenWorksheetDirect(...)`，完成列配置和列宽后再保存到该项目收藏夹；不得跨项目创建后移动。
-- 已确认 `Worksheet.Attributes.Add(...)`、`WorksheetAttribute.Width`、`Worksheet.ProtectColumnWidth`、`Worksheet.SaveConfiguration(...)` 和收藏夹读回路径。
-- 自定义列标签暂不实现。Excel 第一行标签只用于预览、列宽计算和日志；正式 `CreateWorksheets` 不调用 `aucCmdEditColumnLabel` 或 UI Automation。
-- 工作表对象类型当前固定为器件；单个工作表失败后继续其他有效工作表，每次操作保存 JSON/TXT 日志并展示结果。
-
-#### 权限配置
-
-- `permission.read` 已有 EB2024 确认证据。
-- `permission.write` 仍是候选/未确认能力。
-- 首版应优先只读展示，写权限配置前必须另做受控验证。
-
-#### 图形模板
-
-- 通过已存在的图形模板执行 `template.instantiate` 在 EB2023/2024 已有确认路径。
-- 自动创建图形模板/模板图例 `template.graphic.create` 在 EB2023/2024 均有失败证据，当前应视为不支持或受阻。
-- 不要把模板实例化成功误认为模板创建成功。
-
-#### 工具面板配置
-
-- EB2023/2024 已确认受控路径：定位“工具面板配置”，复制已有面板，修改 AID 5/25，读回，删除临时面板并确认清理。
-- 该证据支持以“复制现有配置后修改”为基础设计，不支持任意猜测新的内部面板 API。
-- 不得删除用户已有的非目标面板。
-
-### 11.6 不应照搬的内容
+### 15.5 不应照搬的内容
 
 以下内容属于 EngineeringBaseCodemap 自身治理体系，不是 EBAssistant 的运行架构：
 

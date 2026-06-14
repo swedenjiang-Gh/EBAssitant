@@ -129,10 +129,65 @@ Excel 中的目标列标签依次为：
 
 不得使用另一个普通项目作为交互上下文，也不得创建后跨项目移动配置。
 
-SDK 文档说明 `OpenWorksheet(string, ...)` 的 string 参数是工作表配置对象 ID，不是显示名称。已确认按配置名称非交互打开不会把 EB UI 切换到真正工作表窗口；按配置名称交互打开在 EB2023 报 `COMException：该对象不允许使用方法!`。中断前代码已改为按配置对象 ID 交互打开，但尚未构建和实测。
+SDK 文档说明 `OpenWorksheet(string, ...)` 的 string 参数是工作表配置对象 ID，不是显示名称。已确认按配置名称非交互打开不会把 EB UI 切换到真正工作表窗口；按配置名称交互打开在 EB2023 报 `COMException：该对象不允许使用方法!`。因此正式创建流程不依赖 `OpenWorksheet(...)` 交互打开路径。
+
+当前 EBAssistant 正式 `CreateWorksheets` 路径已经改为：
+
+1. 解析所选项目。
+2. 用所选项目自己的 `EquipmentFolder.OpenWorksheetDirect(...)` 创建器件工作表。
+3. 添加属性列并设置列宽。
+4. 调用 `Worksheet.SaveConfiguration(name, favoriteFolder)` 直接保存到同一项目的 `工作表 / 收藏夹`。
+5. 从收藏夹读回确认。
+
+自定义列标签编辑已按用户要求暂时跳过。Excel 第一行标签只用于预览、列宽计算和日志；正式功能不调用 `aucCmdEditColumnLabel`，也不使用 UI Automation 或 SQL 内部表写入。
 
 完整的已确认能力、失败路径、自动化阻塞教训、当前代码状态和下一步最小验证见：
 
 ```text
 docs/worksheet-development-handoff.md
+```
+
+## 12. 2026-06-14 列标签实施方式回溯
+
+用户回问“测试工作表列标签当时是怎样实施的”时，重新核对了 EngineeringBaseCodemap 中的运行证据、KR 和 OOE 卡片。结论是：2026-06-13 那次成功修改不是通过 EB 的“编辑列标签”对话框，也不是通过 `Worksheet.Columns` 写入，而是一次受控的数据库内部列记录修复。
+
+当时的完整实施链路如下：
+
+1. 用 Excel COM 读取 `D:\工作资料\鹰达信科\上海鹰达\AI+设计\EB CodeMap测试\工作表.xlsx` 的 `Sheet1` 第一行。
+2. 得到目标列标签顺序：`名称1`、`演示属性`、`A`。
+3. 在 EB2023 数据库 `.\EB140 / EB1_2023` 中按 `Designation='测试工作表'` 查找工作表配置对象。
+4. 发现存在两个同名对象：项目 `测试项目` 下 OID `4102500`，项目 `test` 下 OID `4102540`。
+5. 通过 SQL 父链确认目标必须是项目 `test` 下的 OID `4102540`，EB ID 为 `00000000-0000-0000-0000-0000003E998C`。
+6. 读取 `OIDParent=4102540 AND CID=19` 的直接子记录，并按 `OrderNumber, OID` 排序。
+7. 将 Excel 标签依次映射到三个内部列记录：
+
+| 列记录 OID | OrderNumber | 原标签 | 新标签 |
+|---:|---:|---|---|
+| `4297614` | `80` | `311` | `名称1` |
+| `4297615` | `112` | `3111` | `演示属性` |
+| `4297616` | `144` | `A` | `A` |
+
+8. 在 SQL transaction 中按 exact OID 更新 `dbo.[Object].Designation`。
+9. 每条更新后使用 `SELECT @@ROWCOUNT` 验证只命中一行，不依赖 `ExecuteNonQuery()` 的返回值，因为 EB 数据库触发器可能放大受影响行数。
+10. 提交后再次按 `OIDParent=4102540 AND CID=19` 回读，确认顺序和值为 `名称1`、`演示属性`、`A`。
+
+当时也验证了两条看起来更自然的路线不可用：
+
+- `GetSnglObjectByID` 能解析工作表配置对象 `4102540`，但不能把 `4297614`、`4297615`、`4297616` 解析为普通 `ObjectItem`。
+- `parent.OpenWorksheet("测试工作表")` 能返回 `Worksheet`，但该样本中 `Worksheet.Columns.Count=0`，所以不能通过 `Worksheet.Columns` 找到可写列标签对象。
+
+对 EBAssistant 的后续开发教训：
+
+- 这条路线只能作为“人工明确批准的诊断修复路线”，不能接入默认批量创建或无人值守适配器。
+- 如果未来要实现正式列标签编辑，应优先重新验证 EB 原生命令 `aucCmdEditColumnLabel=57515`，并用 UI Automation 精确定位窗口、列标题和对话框。
+- 同名工作表必须通过项目父链消歧；名称、路径、OID、CID、列数和读回值都要同时进入日志。
+- 对任何数据库内部写入，都必须使用事务、精确 OID、`@@ROWCOUNT`、提交后读回，以及失败回滚。
+- 这次经验不能泛化为“工作表创建时可写自定义列标签”。当前产品设计中，自定义列标签仍应按已确认边界处理：若未完成原生命令实测，就只用于预览、列宽计算和日志。
+
+可追溯来源：
+
+```text
+../EngineeringBaseCodemap/docs/references/engineering-base/evidence/worksheet-column-label-edit-eb2023-com30.confirmed.json
+../EngineeringBaseCodemap/harness/knowledge/validated/platforms/engineering-base/KR-0090-eb2023-com30-worksheet-column-label-edit.json
+../EngineeringBaseCodemap/docs/codemap-cards/platforms/engineering-base/OOE-043.worksheet-column-label-edit.md
 ```

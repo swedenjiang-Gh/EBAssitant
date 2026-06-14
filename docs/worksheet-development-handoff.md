@@ -1,182 +1,184 @@
 # 工作表功能开发经验与交接
 
-日期：2026-06-13
+本文记录“工作表”功能在本轮对话中的最终实现、确认路线和已经排除的错误路径。以当前代码状态为准。
 
-## 1. 正确业务流程
+## 1. 当前最终状态
 
-工作表配置保存在哪个项目，就必须从同一个项目的“设备”目录打开该工作表，然后编辑列标签、调整列宽并保存。
+- “工作表”入口已从占位推进到可用窗口。
+- 项目模板树从 `Application.Folders.ProjectTemplates` 读取，并按“EB 版本 + 项目模板根目录 ID”缓存。
+- 树默认折叠，只有用户点击“刷新”才重新读取 EB 并覆盖缓存。
+- 只有模板项目节点允许右键“新建工作表”。
+- “新建工作表”窗口支持导入 `.xlsx` 和 `.xls`。
+- 每个 Excel 页签对应一个待创建的 EB 工作表。
+- 第一列忽略；从第二列开始，每列对应工作表中的一列。
+- 第一行是列标签预览，只用于预览、列宽计算和日志。
+- 第二行是属性 ID。
+- 工作表对象类型当前固定为“器件”。
+- 创建结果会弹窗展示，并保存 JSON/TXT 日志到 `%LOCALAPPDATA%\EBAssistant\Logs\Worksheets`。
 
-完整闭环：
+正式代码已提交：
 
-1. 在所选模板项目中创建器件工作表。
-2. 将配置保存到该项目的：
+```text
+f0af113 feat: create worksheets from Excel
+```
+
+## 2. 正确创建路线
+
+工作表配置保存在哪个项目，就必须使用同一个项目的“设备”目录创建工作表，再保存到该项目自己的工作表收藏夹。
+
+正确目标路径：
 
 ```text
 项目模板 / 所选模板项目 / 工作表 / 收藏夹
 ```
 
-3. 从该项目自己的“设备”目录打开已保存工作表。
-4. 在真正打开的工作表交互窗口中编辑列标签、调整列宽。
-5. 保存工作表配置。
+适配器核心流程：
 
-不得寻找另一个普通项目作为打开上下文，也不得先保存到另一个项目后再移动回来。
+1. 通过 `app.Utils.GetSnglObjectByID(templateProjectId)` 重新解析模板项目。
+2. 使用 `Project.WorksheetTemplatesFolder` 定位项目的“工作表”目录。
+3. 在该目录下用 `AucObjectKind.aucObjFavoriteListConfigurations` 定位唯一“收藏夹”。
+4. 使用同一个项目的 `EquipmentFolder.OpenWorksheetDirect(...)` 创建器件工作表。
+5. 按 Excel 列顺序调用 `worksheet.Attributes.Add((AucAttribute)aid, position)`。
+6. 设置 `WorksheetAttribute.Width`。
+7. 设置 `worksheet.ProtectColumnWidth = true`。
+8. 调用 `worksheet.SaveConfiguration(finalName, favoriteFolder)`。
+9. 从收藏夹重新枚举，按最终名称读回确认配置已保存。
+10. 关闭 `Worksheet`。
 
-## 2. 已确认事实
+当前正式代码不从别的普通项目创建后移动配置，也不从收藏夹配置对象本身直接打开工作表。
 
-### 2.1 项目和目标目录
+## 3. Excel 规则
 
-EB2023 当前测试项目：
-
-```text
-名称：xxxx模板项目
-ID：00000000-0000-0000-0000-00000038E386
-目标：项目模板 / xxxx模板项目 / 工作表 / 收藏夹
-```
-
-- `Project.WorksheetTemplatesFolder` 可以取得项目的“工作表”目录。
-- `AucObjectKind.aucObjFavoriteListConfigurations` 可以唯一定位“收藏夹”。
-- 所选项目自身的 `EquipmentFolder` 是打开该项目工作表的正确上下文。
-
-### 2.2 工作表配置创建
-
-- 从所选项目的 `EquipmentFolder` 调用 `OpenWorksheetDirect(...)` 可以创建临时器件工作表对象。
-- `Worksheet.Attributes.Add(...)` 可以添加属性列。
-- `WorksheetAttribute.Width` 和 `Worksheet.ProtectColumnWidth` 可以写入。
-- `Worksheet.SaveConfiguration(name, favoriteFolder)` 可以把配置直接保存到同一项目的“工作表 / 收藏夹”。
-- 保存后可以从收藏夹枚举并读回配置对象。
-- 多次真实验证创建的临时配置均已删除；最后通过 `GetWorksheetCreationContext` 确认收藏夹中没有临时名称残留。
-
-### 2.3 列标签能力边界
-
-- 强类型 COM 的 `WorksheetAttribute.Name`、`AttributeName` 只有 getter。
-- 可用的交互命令为：
+工作表 Excel 的固定约定：
 
 ```text
-AucCommand.aucCmdEditColumnLabel = 57515
+每个 Excel 页签 = 一个 EB 工作表
+第 1 列 = 忽略
+第 2 列开始 = EB 工作表列
+第 1 行 = 列标签预览
+第 2 行 = 属性 ID
+第 3 行以后 = 忽略
 ```
 
-- 该命令只有在 EB 当前显示的是真正工作表交互窗口，并且列标题被正确选中时才有意义。
-- 在普通设备目录列表上执行该命令，会弹出提示：
+校验规则：
+
+- 页签名称为空或包含非法文件名字符时跳过该页签。
+- 没有可创建列时跳过该页签。
+- 列标签为空时跳过该页签。
+- 属性 ID 不是正整数时跳过该页签。
+- 属性 ID 在 EB 中不存在时跳过该页签。
+- 同一页签内属性 ID 重复时跳过该页签。
+
+无效页签不会阻止其他有效页签继续创建。
+
+## 4. 名称与缓存规则
+
+- 工作表最终名称由适配器在写入前重新计算，不能只信任导入预览阶段的缓存结果。
+- 同名时使用最小可用后缀：`名称`、`名称 (2)`、`名称 (3)`。
+- 校验失败、最终跳过的页签不能占用同名序号。
+- 创建工作表不会改变项目模板目录树，因此创建后不刷新树，也不更新项目模板树缓存。
+
+## 5. 列标签边界
+
+自定义列标签暂不实现。
+
+原因和结论：
+
+- COM 30/31 中 `WorksheetAttribute.Name`、`AttributeName` 等公开成员没有可写 setter。
+- `aucCmdEditColumnLabel = 57515` 是交互命令，不是稳定的纯 COM 写入接口。
+- 该命令只有在 EB 当前显示真正工作表交互窗口且列标题被正确选中时才有意义。
+- 在普通设备目录列表上调用会出现“要编辑该数据，请先保存工作表模板，然后重试！”一类提示。
+- 用户已明确要求暂时跳过该需求。
+
+正式 `CreateWorksheets` 因此不调用 `aucCmdEditColumnLabel`，不做 UI Automation，也不写数据库内部表。Excel 第一行标签只用于：
+
+- 导入预览。
+- 计算列宽。
+- 记录日志。
+
+EB 中显示默认属性名称。
+
+## 6. 已排除路径
+
+以下路径已经验证或推导为不适合正式流程，不要重复走：
+
+1. 从模板项目的 `工作表 / 收藏夹` 配置对象本身直接打开工作表。
+   - 会出现 `COMException：该对象不允许使用方法!` 或只显示“无可用于此对象的对象”。
+2. 使用另一个普通项目创建工作表后再移动到目标模板项目。
+   - 用户已明确：工作表存在哪个项目下，就在这个项目的设备目录上打开工作表。
+3. 把 `aucCmdOpenSheet` 当作“打开指定工作表配置”。
+   - 实际只会打开或停留在设备目录普通列表。
+4. 把 `OpenWorksheet(配置名称)` 当成交互打开。
+   - 它可能返回 COM `Worksheet`，但 EB UI 不会切换到真正的工作表窗口。
+5. 未确认工作表交互窗口时执行编辑列标签命令。
+   - 容易命中普通列表列头，触发 EB 提示或错误。
+
+## 7. 失败策略
+
+当前工作表批量创建采用“单项失败继续”的策略：
+
+- 本地或 EB 校验失败：该页签记录为 `validation_skipped`。
+- 适配器初始化失败或无法连接目标：有效页签记录为 `unprocessed`。
+- 单个工作表创建、加列、设宽、保存或读回失败：该工作表记录为 `failed`，继续处理后续工作表。
+- 创建成功：记录为 `created`。
+
+汇总状态：
+
+- 全部创建成功：`completed`
+- 至少一个成功且存在失败/跳过：`partial`
+- 没有任何成功：`failed`
+
+## 8. 日志和结果
+
+每次点击“确定”后，无论成功、部分成功还是失败，都应：
+
+1. 合并适配器返回记录与本地校验跳过记录。
+2. 保存 JSON 结构化日志。
+3. 保存 TXT 可读日志。
+4. 弹出“工作表创建结果”窗口。
+5. 提供“打开日志目录”按钮。
+
+日志目录：
 
 ```text
-要编辑该数据，请先保存工作表模板，然后重试！
+%LOCALAPPDATA%\EBAssistant\Logs\Worksheets
 ```
 
-## 3. 已排除的错误路径
+如果日志保存失败，不能改变已经完成的 EB 创建结果；界面只提示日志保存失败，并仍展示结果。
 
-以下路径已通过真实 EB2023 实验确认不可作为正式方案：
+## 9. 人工操作等价流程
 
-1. 从模板收藏夹中的工作表配置对象本身直接打开工作表。
-   - `Project.OpenWorksheet(configuration, true)` 报 `COMException：该对象不允许使用方法!`
-   - `EquipmentFolder.OpenWorksheet(configuration, true)` 报同类错误。
-2. 使用另一个普通项目创建或打开，再把配置移动回目标模板项目。
-   - 这不符合用户要求，且增加跨项目上下文错误。
-3. 对设备目录执行 `aucCmdOpenSheet` 后认为目标工作表已打开。
-   - 实际只打开或停留在设备目录普通列表，右侧列为“名称 / 注释”。
-4. 使用配置名称调用非交互 `EquipmentFolder.OpenWorksheet(name)` 后认为 UI 已切换。
-   - 可以返回 COM `Worksheet`，但 EB UI 仍停留在普通设备目录列表。
-5. 使用配置名称调用 `EquipmentFolder.OpenWorksheet(name, true)`。
-   - EB2023 返回 `COMException：该对象不允许使用方法!`
-6. 在普通设备目录列表上选择列头后调用 `aucCmdEditColumnLabel`。
-   - 弹出“请先保存工作表模板”提示，不会出现“编辑列标签”对话框。
+如果换成人在 EB 中手工操作，应当这样做：
 
-## 4. 关键 API 语义教训
+1. 找到要保存工作表的模板项目。
+2. 进入该项目自己的“设备”目录。
+3. 新建一个器件工作表。
+4. 按 Excel 第二行的属性 ID，从左到右添加属性列。
+5. 按 Excel 第一行标签长度调整每列宽度。
+6. 不修改列标签，保留 EB 默认属性名称。
+7. 将工作表配置保存到该项目的 `工作表 / 收藏夹`。
+8. 如果已有同名工作表，则使用 `名称 (2)`、`名称 (3)` 等后缀。
+9. 对 Excel 的每个页签重复上述流程。
 
-SDK 文档对 `ObjectItem.OpenWorksheet(string, bool, WorksheetLoadBehavior)` 的说明指出：
+## 10. 验证记录
 
-- `string worksheetConfiguration` 是工作表配置对象 ID。
-- `interactiveOnly=true` 表示打开交互工作表。
-- `interactiveOnly=false` 表示打开供插件交互的工作表。
+工作表功能完成时曾通过当时的测试和完整构建；后续项目测试范围已经扩展，因此不要再把旧的工作表阶段测试组数当作当前项目总测试数。
 
-因此不能把工作表显示名称和配置对象 ID 混用。当前下一条最小验证路径应为：
+当前应在仓库根目录重新执行：
 
-```csharp
-equipmentFolder.OpenWorksheet(temporaryObject.ID, true)
+```powershell
+dotnet run --project .\Tests\EBAssistant.Tests.csproj
+dotnet build .\EBAssistant.csproj --disable-build-servers
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-中断前代码已改成这一调用，但尚未重新构建和真实验证。它是待验证假设，不是已确认配方。
+完整构建需要确认主程序、EB2023 适配器、EB2024 适配器和 EB2025 占位适配器均构建成功。
 
-## 5. 当前代码状态
+注意：工作表最终提交前没有执行真实 EB 正式写入测试，以避免在用户数据库中留下测试工作表。真实写入验证只能在明确可清理的受控数据库中执行。
 
-工作区存在未提交改动，不能回退：
+## 11. 后续开发注意
 
-- `Adapters/AdapterProgram.cs` 已加入一次性工作表能力验证和 UI 自动化实验代码。
-- `Adapters/2023/EBAssistant.Adapter2023.csproj`、`Adapters/2024/EBAssistant.Adapter2024.csproj` 已加入 UI Automation、WindowsBase 和 Accessibility 引用。
-- `WorksheetModels.cs`、`EbAdapterClient.cs` 已加入验证协议。
-- 工作表设计、计划和验证文档已有未提交修改。
-
-当前 `Adapters/AdapterProgram.cs` 中：
-
-- 已将交互项目改为所选模板项目本身。
-- 已停止跨项目移动配置。
-- 最后一次中断前将打开调用改为 `equipmentFolder.OpenWorksheet(temporaryObject.ID, true)`。
-- 该最后改动尚未构建和实测。
-
-正式 `CreateWorksheets` 仍未实现，不能声称工作表功能已完成。
-
-## 6. 真实验证记录
-
-### 验证 A：同项目保存并按名称非交互打开
-
-结果：
-
-- 临时配置保存成功。
-- 临时配置读回成功。
-- `OpenWorksheet(name)` 返回工作表对象。
-- EB UI 仍显示 `项目模板 / xxxx模板项目 / 设备`。
-- 右侧仍是普通设备目录列表。
-- 执行编辑列标签命令后弹出“请先保存工作表模板”。
-- 临时配置删除成功。
-
-### 验证 B：按名称交互打开
-
-调用：
-
-```csharp
-equipmentFolder.OpenWorksheet(temporaryWorksheetName, true)
-```
-
-结果：
-
-```text
-COMException：该对象不允许使用方法!
-```
-
-临时配置关闭和删除成功。
-
-### 验证 C：命令上下文改为配置对象
-
-结果：
-
-- `ExecuteCommand` 被 EB 模态提示阻塞，适配器进程不能正常返回。
-- 自动化线程只寻找“编辑列标签”对话框，没有识别通用 EB 信息提示。
-- 最终关闭提示并终止明确的适配器进程。
-- 随后读回确认目标收藏夹没有临时配置残留。
-
-## 7. 自动化与清理教训
-
-- `ExecuteCommand` 可能同步阻塞在 EB 模态对话框上；不能假设调用会及时返回。
-- 对话框处理器不能只识别预期的“编辑列标签”，还必须识别 EB 通用错误/信息提示并立即记录失败、自动关闭。
-- 在确认真正工作表窗口已经显示前，不得点击任何列标题或执行编辑命令。
-- UI Automation 找到一个 HeaderItem 不等于它属于目标工作表；必须同时验证当前窗口身份和列集合。
-- `Worksheet.Close()` 在部分状态下会报 `COMException：该对象不允许使用方法!`，清理逻辑仍必须继续删除明确的临时配置对象并读回确认。
-- 每次真实验证必须使用唯一临时名称，只删除本次创建且能通过名称和对象 ID 双重确认的对象。
-- 验证超时后要检查并结束明确的适配器进程，不能结束 EB 主进程。
-
-## 8. 下一步最小验证
-
-1. 构建当前 EB2023 适配器。
-2. 执行 `ValidateWorksheetCreationCapability`。
-3. 只验证 `equipmentFolder.OpenWorksheet(temporaryObject.ID, true)` 是否真正打开交互工作表。
-4. 在调用编辑列标签命令前截图或检查窗口结构，确认右侧列是临时工作表列，而不是“名称 / 注释”。
-5. 若仍失败，停止尝试 `OpenWorksheet` 参数组合，转向自动化 EB 的“打开工作表”菜单，并按临时配置名选择。
-6. 在编辑列标签验证通过前，不实施正式 `CreateWorksheets`。
-
-## 9. 不再重复的错误
-
-- 不再跨项目保存、打开或移动工作表配置。
-- 不再从收藏夹配置对象本身直接打开工作表。
-- 不再把 `aucCmdOpenSheet` 视为已选择指定工作表配置。
-- 不再把配置显示名称当作配置对象 ID。
-- 不再在未确认工作表交互窗口时执行编辑列标签命令。
-- 不再让适配器无限等待未知 EB 模态对话框。
+- 工作表后续若要支持“功能”“管道”等对象类型，应先验证对应打开目录和 `AucObjectKind`，不能只扩展 UI 选项。
+- 若重新开发列标签写入，必须先完成真实 EB 交互窗口定位、列头选择、对话框处理和读回确认，不得用 SQL 内部表或盲目 UI 输入作为默认产品能力。
+- 所有新增适配器操作必须同步修改主程序模型和适配器底部 DataContract 模型。
+- 继续保持主程序不引用 Aucotec COM、不使用 `dynamic`。

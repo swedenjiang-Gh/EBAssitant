@@ -241,20 +241,17 @@ EB 在部分复制场景会提示：
 
 ## 验证与提交
 
-本轮最终自动验证：
+图形模板功能完成时曾通过当时的自动测试和构建验证；后续项目又新增了工具面板配置等测试，因此不要再把旧的图形模板阶段测试组数当作当前项目总测试数。
 
-```text
-PASS: 13 test groups
+当前文档校准后应以仓库根目录重新执行的验证为准：
+
+```powershell
+dotnet run --project .\Tests\EBAssistant.Tests.csproj
+dotnet build .\EBAssistant.csproj --disable-build-servers
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-主程序构建：
-
-```text
-0 个警告
-0 个错误
-```
-
-EB 2023/2024 adapter 均已通过 Roslyn 编译，并更新至主程序输出目录。
+EB 2023/2024 adapter 仍需通过完整 `build.ps1` 构建确认，不能只用主程序 `dotnet build` 代替。
 
 相关提交：
 
