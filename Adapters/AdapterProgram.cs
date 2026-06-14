@@ -76,7 +76,8 @@ namespace EBAssistant.Adapter
 
         private static AdapterResponse<ConnectionInfo> GetConnectionInfo()
         {
-            var app = GetActiveApplication();
+            var diagnostics = new List<string>();
+            var app = GetActiveApplication(diagnostics);
             return Ok(new ConnectionInfo
             {
                 Version = Version,
@@ -85,40 +86,74 @@ namespace EBAssistant.Adapter
                 DatabaseServer = app == null ? "" : Safe(delegate { return app.DatabaseServer; }, ""),
                 DatabaseInstance = app == null ? "" : Safe(delegate { return app.DatabaseInstance; }, ""),
                 Database = app == null ? "" : Safe(delegate { return app.Database; }, "")
-            }, app == null ? "未运行" : "已连接");
+            }, app == null ? BuildConnectionFailureMessage(diagnostics) : "已连接");
         }
 
         private static EbApplication GetActiveApplication()
+        {
+            return GetActiveApplication(null);
+        }
+
+        private static EbApplication GetActiveApplication(List<string> diagnostics)
         {
             foreach (var progId in new[] { ProgId, "EngineeringBase.Application", "Aucotec.Application" })
             {
                 try
                 {
                     var app = (EbApplication)Marshal.GetActiveObject(progId);
-                    if (app != null) return app;
+                    if (app != null)
+                    {
+                        AddDiagnostic(diagnostics, "GetActiveObject succeeded: " + progId);
+                        return app;
+                    }
                 }
-                catch (COMException) { }
-                catch (InvalidCastException) { }
+                catch (COMException ex)
+                {
+                    AddDiagnostic(diagnostics, "GetActiveObject failed: " + progId + " (" + FormatComException(ex) + ")");
+                }
+                catch (InvalidCastException ex)
+                {
+                    AddDiagnostic(diagnostics, "GetActiveObject returned an incompatible object: " + progId + " (" + ex.Message + ")");
+                }
             }
             var tableResult = GetRunningObjectTable(0, out var table);
             if (tableResult == 0 && table != null)
             {
+                var inspected = 0;
                 table.EnumRunning(out var enumerator);
                 var monikers = new IMoniker[1];
                 var fetched = IntPtr.Zero;
                 while (enumerator.Next(1, monikers, fetched) == 0)
                 {
+                    inspected++;
                     try
                     {
                         table.GetObject(monikers[0], out var raw);
                         var app = raw as EbApplication;
-                        if (app != null) return app;
+                        if (app != null)
+                        {
+                            AddDiagnostic(diagnostics, "Running Object Table succeeded after inspecting " + inspected.ToString(CultureInfo.InvariantCulture) + " object(s).");
+                            return app;
+                        }
                     }
-                    catch (COMException) { }
-                    catch (InvalidCastException) { }
+                    catch (COMException ex)
+                    {
+                        AddDiagnostic(diagnostics, "Running Object Table object read failed (" + FormatComException(ex) + ")");
+                    }
+                    catch (InvalidCastException ex)
+                    {
+                        AddDiagnostic(diagnostics, "Running Object Table object cast failed (" + ex.Message + ")");
+                    }
                 }
+                AddDiagnostic(diagnostics, "Running Object Table inspected " + inspected.ToString(CultureInfo.InvariantCulture) + " object(s), no EB " + Version + " application object found.");
             }
-            if (IsExpectedClientRunning())
+            else
+            {
+                AddDiagnostic(diagnostics, "GetRunningObjectTable failed: 0x" + tableResult.ToString("X8", CultureInfo.InvariantCulture));
+            }
+
+            var processProbe = ProbeEngineeringBaseProcesses(diagnostics);
+            if (processProbe.ExpectedClientRunning)
             {
                 try
                 {
@@ -126,28 +161,87 @@ namespace EBAssistant.Adapter
                     if (type != null)
                     {
                         var app = (EbApplication)Activator.CreateInstance(type);
-                        if (app != null && app.Folders != null) return app;
+                        if (app != null && app.Folders != null)
+                        {
+                            AddDiagnostic(diagnostics, "Activator fallback succeeded: " + ProgId);
+                            return app;
+                        }
+                        AddDiagnostic(diagnostics, "Activator fallback returned no usable folders: " + ProgId);
+                    }
+                    else
+                    {
+                        AddDiagnostic(diagnostics, "ProgID is not registered: " + ProgId);
                     }
                 }
-                catch (COMException) { }
-                catch (InvalidCastException) { }
+                catch (COMException ex)
+                {
+                    AddDiagnostic(diagnostics, "Activator fallback failed: " + ProgId + " (" + FormatComException(ex) + ")");
+                }
+                catch (InvalidCastException ex)
+                {
+                    AddDiagnostic(diagnostics, "Activator fallback returned an incompatible object: " + ProgId + " (" + ex.Message + ")");
+                }
+            }
+            else if (processProbe.AnyEngineeringBaseProcess)
+            {
+                AddDiagnostic(diagnostics, "EngineeringBase process exists, but this adapter could not confirm it is EB " + Version + ". Check EB and EBAssistant are run by the same user and privilege level.");
+            }
+            else
+            {
+                AddDiagnostic(diagnostics, "No EngineeringBase.exe process was found.");
             }
             return null;
         }
 
-        private static bool IsExpectedClientRunning()
+        private static ClientProcessProbe ProbeEngineeringBaseProcesses(List<string> diagnostics)
         {
-            foreach (var process in Process.GetProcessesByName("EngineeringBase"))
+            var probe = new ClientProcessProbe();
+            var processes = Process.GetProcessesByName("EngineeringBase");
+            AddDiagnostic(diagnostics, "EngineeringBase process count: " + processes.Length.ToString(CultureInfo.InvariantCulture));
+            foreach (var process in processes)
             {
                 try
                 {
+                    probe.AnyEngineeringBaseProcess = true;
                     var path = process.MainModule == null ? "" : process.MainModule.FileName;
+                    AddDiagnostic(diagnostics, "EngineeringBase process " + process.Id.ToString(CultureInfo.InvariantCulture) + " path: " + (string.IsNullOrWhiteSpace(path) ? "<empty>" : path));
                     if (!string.IsNullOrWhiteSpace(path) && path.IndexOf(ExpectedInstallFolder, StringComparison.OrdinalIgnoreCase) >= 0)
-                        return true;
+                        probe.ExpectedClientRunning = true;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    probe.AnyEngineeringBaseProcess = true;
+                    AddDiagnostic(diagnostics, "EngineeringBase process " + process.Id.ToString(CultureInfo.InvariantCulture) + " path unavailable: " + ex.GetType().Name + ": " + ex.Message);
+                }
+                finally
+                {
+                    process.Dispose();
+                }
             }
-            return false;
+            return probe;
+        }
+
+        private static string BuildConnectionFailureMessage(List<string> diagnostics)
+        {
+            if (diagnostics == null || diagnostics.Count == 0)
+                return "未检测到可附着的 EB " + Version + "。";
+            return "未检测到可附着的 EB " + Version + "。" + Environment.NewLine + string.Join(Environment.NewLine, diagnostics.ToArray());
+        }
+
+        private static void AddDiagnostic(List<string> diagnostics, string message)
+        {
+            if (diagnostics != null) diagnostics.Add(message);
+        }
+
+        private static string FormatComException(COMException ex)
+        {
+            return "0x" + ex.ErrorCode.ToString("X8", CultureInfo.InvariantCulture) + " " + ex.Message;
+        }
+
+        private sealed class ClientProcessProbe
+        {
+            public bool AnyEngineeringBaseProcess;
+            public bool ExpectedClientRunning;
         }
 
         [DllImport("ole32.dll")]
