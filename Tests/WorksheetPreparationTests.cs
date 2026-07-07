@@ -42,7 +42,7 @@ internal static class WorksheetPreparationTests
 
         Assert.Equal("设备 (2)", sheets[0].FinalName);
         Assert.Equal("有效", sheets[0].Validation);
-        Assert.Equal("有效；列标签仅预览，不写入 EB", sheets[0].Columns[0].Validation);
+        Assert.Equal("有效；列标签将在创建后写入 EB", sheets[0].Columns[0].Validation);
         Assert.Equal("属性 ID 999 在 EB 中不存在", sheets[1].Columns[0].Validation);
         Assert.Equal("Excel 列 2 属性 ID 999 在 EB 中不存在", sheets[1].Validation);
         Assert.Equal("跳过项", sheets[2].FinalName);

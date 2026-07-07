@@ -26,7 +26,7 @@ public sealed class CreateWorksheetsForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         Size = new Size(1120, 680);
         Font = new Font("Microsoft YaHei UI", 10F);
-        _target.Text = $"目标项目：{project.FullPath}；保存位置：工作表 / 收藏夹";
+        _target.Text = $"目标项目：{project.FullPath}；保存位置：工作表 / 收藏夹；列标签将写入 EB";
 
         var buttons = new FlowLayoutPanel
         {
@@ -110,7 +110,7 @@ public sealed class CreateWorksheetsForm : Form
             }))
             .ToList();
         var valid = _sheets.Count(x => x.IsValid);
-        _summary.Text = $"共 {_sheets.Count} 个页签，可创建 {valid} 个，跳过 {_sheets.Count - valid} 个；列标签不写入 EB。";
+        _summary.Text = $"共 {_sheets.Count} 个页签，可创建 {valid} 个，跳过 {_sheets.Count - valid} 个；列标签将写入 EB。";
     }
 
     private async Task CreateAsync()
@@ -171,7 +171,7 @@ public sealed class CreateWorksheetsForm : Form
         ObjectType = "器件",
         ColumnCount = sheet.Columns.Count,
         ColumnSummary = string.Join("；", sheet.Columns.Select(x => $"{x.Label} (AID={x.AttributeId})")),
-        LabelStatus = "未写入 EB（EB 显示默认属性名称）",
+        LabelStatus = "未处理",
         AutoWidthStatus = "未处理",
         Status = "validation_skipped",
         Message = sheet.Validation
@@ -188,7 +188,7 @@ public sealed class CreateWorksheetsForm : Form
             ObjectType = "器件",
             ColumnCount = sheet.Columns.Count,
             ColumnSummary = string.Join("；", sheet.Columns.Select(x => $"{x.Label} (AID={x.AttributeId})")),
-            LabelStatus = "未写入 EB（EB 显示默认属性名称）",
+            LabelStatus = "未处理",
             AutoWidthStatus = "未处理",
             Status = "unprocessed",
             Message = message

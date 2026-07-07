@@ -35,7 +35,7 @@ public static class WorksheetPreparation
                 }
                 else
                 {
-                    column.Validation = "有效；列标签仅预览，不写入 EB";
+                    column.Validation = "有效；列标签将在创建后写入 EB";
                 }
             }
 

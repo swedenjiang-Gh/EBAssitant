@@ -1725,6 +1725,10 @@ namespace EBAssistant.Adapter
             var result = new CreateWorksheetsResult { Status = "completed" };
             if (request == null || string.IsNullOrWhiteSpace(request.TemplateProjectId) || request.Worksheets == null)
                 return Fail<CreateWorksheetsResult>("工作表创建请求无效。");
+            if (request.Worksheets.Count == 0)
+                return Fail<CreateWorksheetsResult>("没有可创建的工作表。");
+            if (!string.Equals(Version, "2023", StringComparison.OrdinalIgnoreCase))
+                return Fail<CreateWorksheetsResult>("工作表列标签 SQL 写入目前只允许 EB2023；当前适配器版本为 EB " + Version + "。");
 
             Project project;
             ObjectItem favorite;
@@ -1738,6 +1742,8 @@ namespace EBAssistant.Adapter
             if (equipmentFolder == null)
                 return Fail<CreateWorksheetsResult>("所选项目下未找到设备目录。");
 
+            using (var labelConnection = OpenEbDatabaseConnection(app))
+            {
             var reservedNames = new List<string>();
             foreach (object raw in favorite.Children as IEnumerable)
             {
@@ -1759,10 +1765,11 @@ namespace EBAssistant.Adapter
                     ObjectType = "器件",
                     ColumnCount = item.Columns == null ? 0 : item.Columns.Count,
                     ColumnSummary = item.Columns == null ? "" : string.Join("；", item.Columns.OrderBy(x => x.Position).Select(x => x.Label + " (AID=" + x.AttributeId + ")")),
-                    LabelStatus = "未写入 EB（EB 显示默认属性名称）",
+                    LabelStatus = "待写入",
                     AutoWidthStatus = "待设置"
                 };
                 Worksheet worksheet = null;
+                var configurationSaved = false;
                 try
                 {
                     if (string.IsNullOrWhiteSpace(finalName))
@@ -1789,16 +1796,21 @@ namespace EBAssistant.Adapter
                     var readback = FindUniqueDirectChildByName(favorite.Children as IEnumerable, finalName);
                     if (readback == null)
                         throw new InvalidOperationException("保存后无法在工作表收藏夹中读回配置。");
+                    configurationSaved = true;
 
+                    var labels = item.Columns.OrderBy(x => x.Position).Select(x => x.Label).ToList();
+                    record.LabelStatus = ApplyWorksheetColumnLabels(labelConnection, readback, labels);
                     reservedNames.Add(finalName);
                     record.Status = "created";
-                    record.Message = "工作表已创建并读回确认；Excel 列标签仅用于预览、列宽计算和日志。";
+                    record.Message = "工作表已创建，列标签已写入并读回确认。";
                 }
                 catch (Exception ex)
                 {
                     result.Status = result.Records.Any(x => x.Status == "created") ? "partial" : "failed";
                     record.Status = "failed";
-                    record.Message = Describe(ex);
+                    record.Message = configurationSaved
+                        ? "工作表配置已保存，但列标签写入或读回失败：" + Describe(ex)
+                        : Describe(ex);
                 }
                 finally
                 {
@@ -1814,6 +1826,7 @@ namespace EBAssistant.Adapter
                     }
                 }
                 result.Records.Add(record);
+            }
             }
 
             if (result.Records.Count == 0)
@@ -1831,6 +1844,98 @@ namespace EBAssistant.Adapter
                 Message = result.Status == "completed" ? "工作表创建完成。" : result.Status == "partial" ? "部分工作表创建完成。" : "工作表创建失败。",
                 Data = result
             };
+        }
+
+        private sealed class WorksheetColumnLabelRecord
+        {
+            public long Oid;
+            public long ParentOid;
+            public int Cid;
+            public string Designation;
+            public int OrderNumber;
+        }
+
+        private static string ApplyWorksheetColumnLabels(SqlConnection connection, ObjectItem worksheetConfiguration, List<string> labels)
+        {
+            if (worksheetConfiguration == null) throw new InvalidOperationException("工作表配置对象为空，无法写入列标签。");
+            if (labels == null || labels.Count == 0) throw new InvalidOperationException("没有可写入的列标签。");
+
+            var parentOid = ToDatabaseOid(worksheetConfiguration.ID);
+            var records = ReadWorksheetColumnLabelRecords(connection, parentOid, null);
+            if (records.Count != labels.Count)
+                throw new InvalidOperationException("工作表内部列记录数与 Excel 标签数不一致：EB=" + records.Count.ToString(CultureInfo.InvariantCulture) + "，Excel=" + labels.Count.ToString(CultureInfo.InvariantCulture) + "。");
+
+            using (var transaction = connection.BeginTransaction())
+            {
+                try
+                {
+                    for (var index = 0; index < records.Count; index++)
+                    {
+                        var record = records[index];
+                        using (var command = new SqlCommand(@"
+UPDATE dbo.[Object]
+SET Designation = @label
+WHERE OID = @oid
+  AND OIDParent = @parentOid
+  AND CID = 19;
+SELECT @@ROWCOUNT;", connection, transaction))
+                        {
+                            command.Parameters.AddWithValue("@label", labels[index]);
+                            command.Parameters.AddWithValue("@oid", record.Oid);
+                            command.Parameters.AddWithValue("@parentOid", parentOid);
+                            var rowCount = Convert.ToInt32(command.ExecuteScalar(), CultureInfo.InvariantCulture);
+                            if (rowCount != 1)
+                                throw new InvalidOperationException("列标签写入命中行数不是 1：OID=" + record.Oid.ToString(CultureInfo.InvariantCulture) + "，RowCount=" + rowCount.ToString(CultureInfo.InvariantCulture) + "。");
+                        }
+                    }
+
+                    var readback = ReadWorksheetColumnLabelRecords(connection, parentOid, transaction);
+                    if (readback.Count != labels.Count)
+                        throw new InvalidOperationException("列标签写入后读回数量不一致。");
+                    for (var index = 0; index < labels.Count; index++)
+                    {
+                        if (!string.Equals(readback[index].Designation, labels[index], StringComparison.Ordinal))
+                            throw new InvalidOperationException("列标签读回不一致：第 " + (index + 1).ToString(CultureInfo.InvariantCulture) + " 列期望“" + labels[index] + "”，实际“" + readback[index].Designation + "”。");
+                    }
+
+                    transaction.Commit();
+                    return "已通过受控 SQL 写入并读回确认：" + string.Join("；", readback.Select(x => x.Oid.ToString(CultureInfo.InvariantCulture) + "=" + x.Designation).ToArray());
+                }
+                catch
+                {
+                    try { transaction.Rollback(); } catch { }
+                    throw;
+                }
+            }
+        }
+
+        private static List<WorksheetColumnLabelRecord> ReadWorksheetColumnLabelRecords(SqlConnection connection, long parentOid, SqlTransaction transaction)
+        {
+            var result = new List<WorksheetColumnLabelRecord>();
+            using (var command = new SqlCommand(@"
+SELECT OID, OIDParent, CID, Designation, OrderNumber
+FROM dbo.[Object]
+WHERE OIDParent = @parentOid
+  AND CID = 19
+ORDER BY OrderNumber, OID;", connection, transaction))
+            {
+                command.Parameters.AddWithValue("@parentOid", parentOid);
+                using (var reader = command.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        result.Add(new WorksheetColumnLabelRecord
+                        {
+                            Oid = Convert.ToInt64(reader["OID"], CultureInfo.InvariantCulture),
+                            ParentOid = Convert.ToInt64(reader["OIDParent"], CultureInfo.InvariantCulture),
+                            Cid = Convert.ToInt32(reader["CID"], CultureInfo.InvariantCulture),
+                            Designation = Convert.ToString(reader["Designation"], CultureInfo.InvariantCulture) ?? "",
+                            OrderNumber = Convert.ToInt32(reader["OrderNumber"], CultureInfo.InvariantCulture)
+                        });
+                    }
+                }
+            }
+            return result;
         }
 
         private static string ResolveWorksheetName(string baseName, IEnumerable<string> reservedNames)
@@ -2302,7 +2407,7 @@ WHERE o.OID=@entry AND o.CID=415;", connection))
             var database = Safe(delegate { return app.Database; }, "");
             if (string.IsNullOrWhiteSpace(server)) server = ".";
             if (string.IsNullOrWhiteSpace(database))
-                throw new InvalidOperationException("当前 EB 未提供数据库名称，无法写入工具面板内部引用。");
+                throw new InvalidOperationException("当前 EB 未提供数据库名称，无法连接 EB 数据库执行受控内部写入。");
             var dataSource = string.IsNullOrWhiteSpace(instance)
                 ? server
                 : instance.StartsWith(@".\", StringComparison.OrdinalIgnoreCase) ||
