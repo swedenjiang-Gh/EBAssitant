@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Diagnostics;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -7,7 +8,7 @@ namespace EBAssistant;
 
 public sealed class VisioAutomation
 {
-    private readonly object _application;
+    private object _application;
     private readonly HashSet<int> _openedSourceDocuments = [];
 
     private VisioAutomation(object application)
@@ -18,8 +19,7 @@ public sealed class VisioAutomation
     public static VisioAutomation OpenOrAttach()
     {
         if (TryGetActiveObject("Visio.Application", out var active) &&
-            active is not null &&
-            CountProcessesByName("VISIO") <= 1)
+            active is not null)
         {
             return new VisioAutomation(active);
         }
@@ -39,9 +39,13 @@ public sealed class VisioAutomation
             throw new FileNotFoundException("源 Visio 文件不存在。", path);
         }
 
-        var documents = Get(_application, "Documents");
-        var document = OpenSourceDocumentFromDocuments(documents, path);
-        _openedSourceDocuments.Add(RuntimeHelpers.GetHashCode(document));
+        var document = TryGetOpenSourceDocument(path);
+        if (document is null)
+        {
+            var documents = Get(_application, "Documents");
+            document = OpenSourceDocumentFromDocuments(documents, path);
+            _openedSourceDocuments.Add(RuntimeHelpers.GetHashCode(document));
+        }
         WaitUntil(
             () => Convert.ToInt32(Get(Get(document, "Pages"), "Count")) > 0,
             TimeSpan.FromSeconds(30),
@@ -55,10 +59,57 @@ public sealed class VisioAutomation
 
     public static object OpenSourceDocumentFromDocuments(object documents, string path)
     {
+        var existing = FindOpenDocumentByFullName(documents, path);
+        if (existing is not null)
+        {
+            return existing;
+        }
+
         const int visOpenRO = 2;
         const int visOpenDontList = 8;
         const int visOpenMacrosDisabled = 128;
         return ComInvocation.Call(documents, "OpenEx", path, visOpenRO | visOpenDontList | visOpenMacrosDisabled);
+    }
+
+    private object? TryGetOpenSourceDocument(string path)
+    {
+        try
+        {
+            var documents = Get(_application, "Documents");
+            var document = FindOpenDocumentByFullName(documents, path);
+            if (document is not null)
+            {
+                return document;
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            return Marshal.BindToMoniker(path);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static object? FindOpenDocumentByFullName(object documents, string path)
+    {
+        var count = Convert.ToInt32(ComInvocation.Get(documents, "Count"));
+        for (var index = 1; index <= count; index++)
+        {
+            var document = ComInvocation.Call(documents, "Item", index);
+            var fullName = SafeFullName(document);
+            if (string.Equals(fullName, path, StringComparison.OrdinalIgnoreCase))
+            {
+                return document;
+            }
+        }
+
+        return null;
     }
 
     public List<VisioGroupShapeInfo> ReadGroupShapes(object document)
@@ -129,17 +180,49 @@ public sealed class VisioAutomation
         string sourceFullName,
         IReadOnlySet<string> documentsBeforeOpen)
     {
-        var active = TryGetActiveDocument();
-        if (IsTargetDocument(active, expectedTemplateName, sourceFullName, documentsBeforeOpen))
+        var target = FindOpenedTargetDocumentInApplication(_application, expectedTemplateName, sourceFullName, documentsBeforeOpen);
+        if (target is not null)
         {
-            return active;
+            return target;
         }
 
-        var documents = Get(_application, "Documents");
-        var count = Convert.ToInt32(Get(documents, "Count"));
+        if (TryGetActiveObject("Visio.Application", out var activeApplication) &&
+            activeApplication is not null)
+        {
+            target = FindOpenedTargetDocumentInApplication(activeApplication, expectedTemplateName, sourceFullName, documentsBeforeOpen);
+            if (target is not null)
+            {
+                _application = activeApplication;
+                return target;
+            }
+        }
+
+        return null;
+    }
+
+    private static object? FindOpenedTargetDocumentInApplication(
+        object application,
+        string expectedTemplateName,
+        string sourceFullName,
+        IReadOnlySet<string> documentsBeforeOpen)
+    {
+        try
+        {
+            var active = ComInvocation.Get(application, "ActiveDocument");
+            if (IsTargetDocument(active, expectedTemplateName, sourceFullName, documentsBeforeOpen))
+            {
+                return active;
+            }
+        }
+        catch
+        {
+        }
+
+        var documents = ComInvocation.Get(application, "Documents");
+        var count = Convert.ToInt32(ComInvocation.Get(documents, "Count"));
         for (var index = 1; index <= count; index++)
         {
-            var document = Call(documents, "Item", index);
+            var document = ComInvocation.Call(documents, "Item", index);
             if (IsTargetDocument(document, expectedTemplateName, sourceFullName, documentsBeforeOpen))
             {
                 return document;
@@ -342,15 +425,28 @@ public sealed class VisioAutomation
         object targetDocument,
         Func<TimeSpan, bool> clickSaveYes,
         Func<IntPtr, bool>? postClose = null,
-        Func<IReadOnlySet<IntPtr>, TimeSpan, bool>? clickSaveYesExcluding = null)
+        Func<IReadOnlySet<IntPtr>, TimeSpan, bool>? clickSaveYesExcluding = null,
+        Action<string>? sendKeys = null,
+        Action<int>? wait = null,
+        Func<object, object, Action<int>, bool>? ensureTargetForeground = null)
     {
+        var existingSaveDialogs = VisioSaveDialogAutomation.CaptureSaveDialogSnapshot();
         var windowHandle = GetPrimaryDocumentWindowHandle(targetDocument);
         if (windowHandle == IntPtr.Zero)
         {
-            throw new InvalidOperationException("未找到目标 Visio 图形模板窗口句柄。");
+            var application = ComInvocation.Get(targetDocument, "Application");
+            TriggerKeyboardCloseWithSavePrompt(
+                application,
+                targetDocument,
+                sendKeys ?? SendKeysToForeground,
+                wait ?? Thread.Sleep,
+                timeout => clickSaveYesExcluding is null
+                    ? clickSaveYes(timeout)
+                    : clickSaveYesExcluding(existingSaveDialogs, timeout),
+                ensureTargetForeground);
+            return;
         }
 
-        var existingSaveDialogs = VisioSaveDialogAutomation.CaptureSaveDialogSnapshot();
         var clickTask = Task.Run(() => clickSaveYesExcluding is null
             ? clickSaveYes(TimeSpan.FromSeconds(30))
             : clickSaveYesExcluding(existingSaveDialogs, TimeSpan.FromSeconds(30)));
@@ -386,24 +482,26 @@ public sealed class VisioAutomation
         {
         }
 
+        return IntPtr.Zero;
+    }
+
+    private static void SendKeysToForeground(string keys)
+    {
+        var type = Type.GetTypeFromProgID("WScript.Shell")
+            ?? throw new InvalidOperationException("未找到 WScript.Shell，无法发送关闭快捷键。");
+        var shell = Activator.CreateInstance(type)
+            ?? throw new InvalidOperationException("无法创建 WScript.Shell，无法发送关闭快捷键。");
         try
         {
-            ComInvocation.CallVoid(document, "Activate");
-            var application = ComInvocation.Get(document, "Application");
-            var activeDocument = ComInvocation.Get(application, "ActiveDocument");
-            if (!string.Equals(DocumentKey(activeDocument), DocumentKey(document), StringComparison.OrdinalIgnoreCase))
-            {
-                return IntPtr.Zero;
-            }
-
-            var activeWindow = ComInvocation.Get(application, "ActiveWindow");
-            return TryGetWindowHandle(activeWindow);
+            type.InvokeMember("SendKeys", BindingFlags.InvokeMethod, null, shell, [keys]);
         }
-        catch
+        finally
         {
+            if (Marshal.IsComObject(shell))
+            {
+                Marshal.ReleaseComObject(shell);
+            }
         }
-
-        return IntPtr.Zero;
     }
 
     private static IntPtr TryGetWindowHandle(object window)
@@ -662,12 +760,6 @@ public sealed class VisioAutomation
 
         var result = GetActiveObject(ref clsid, IntPtr.Zero, out active);
         return result == 0 && active is not null;
-    }
-
-    private static int CountProcessesByName(string processName)
-    {
-        try { return System.Diagnostics.Process.GetProcessesByName(processName).Length; }
-        catch { return 0; }
     }
 
     [DllImport("ole32.dll", CharSet = CharSet.Unicode)]
