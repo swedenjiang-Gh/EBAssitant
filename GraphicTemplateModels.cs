@@ -120,3 +120,63 @@ public sealed class CreateGraphicTemplatesResult
     public int ConfirmedFinalCount { get; set; }
     public List<GraphicTemplateCreationRecord> Records { get; set; } = [];
 }
+
+public sealed class CreateNamedGraphicTemplatesRequest
+{
+    public string DirectoryId { get; set; } = "";
+    public string SourceTemplateId { get; set; } = "";
+    public List<string> TargetNames { get; set; } = [];
+}
+
+public sealed class NamedGraphicTemplateCreationRecord
+{
+    public string RequestedName { get; set; } = "";
+    public string ConfirmedTemplateId { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+}
+
+public sealed class CreateNamedGraphicTemplatesResult
+{
+    public string Status { get; set; } = "";
+    public string DirectoryId { get; set; } = "";
+    public string DirectoryPath { get; set; } = "";
+    public string SourceTemplateId { get; set; } = "";
+    public string SourceTemplateName { get; set; } = "";
+    public List<NamedGraphicTemplateCreationRecord> Records { get; set; } = [];
+}
+
+public sealed class OpenGraphicTemplateWithVisioRequest
+{
+    public string TemplateId { get; set; } = "";
+}
+
+public sealed class OpenGraphicTemplateWithVisioResult
+{
+    public string TemplateId { get; set; } = "";
+    public string TemplateName { get; set; } = "";
+    public string OpenMethod { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+}
+
+public sealed class GraphicTemplateVisioBatchRecord
+{
+    public string TemplateName { get; set; } = "";
+    public string TemplateId { get; set; } = "";
+    public string SourceShapeName { get; set; } = "";
+    public int SourceShapeIndex { get; set; }
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+}
+
+public sealed class GraphicTemplateVisioBatchResult
+{
+    public string SourceVisioPath { get; set; } = "";
+    public string TargetDirectoryPath { get; set; } = "";
+    public int RequestedCount { get; set; }
+    public string BaseTemplateId { get; set; } = "";
+    public string BaseTemplateName { get; set; } = "";
+    public string Status { get; set; } = "";
+    public List<GraphicTemplateVisioBatchRecord> Records { get; set; } = [];
+}

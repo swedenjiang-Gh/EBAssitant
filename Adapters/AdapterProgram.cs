@@ -54,6 +54,8 @@ namespace EBAssistant.Adapter
                 if (operation == "GetGraphicTemplateDirectory") return Write(GetGraphicTemplateDirectory(app, Read<GraphicTemplateDirectoryRequest>()));
                 if (operation == "MoveGraphicTemplates") return Write(MoveGraphicTemplates(app, Read<MoveGraphicTemplatesRequest>()));
                 if (operation == "CreateGraphicTemplates") return Write(CreateGraphicTemplates(app, Read<CreateGraphicTemplatesRequest>()));
+                if (operation == "CreateNamedGraphicTemplates") return Write(CreateNamedGraphicTemplates(app, Read<CreateNamedGraphicTemplatesRequest>()));
+                if (operation == "OpenGraphicTemplateWithVisio") return Write(OpenGraphicTemplateWithVisio(app, Read<OpenGraphicTemplateWithVisioRequest>()));
                 if (operation == "GetToolPanelConfigurationIdentity") return Write(GetToolPanelConfigurationIdentity(app));
                 if (operation == "GetToolPanelConfigurationTree") return Write(GetToolPanelConfigurationTree(app));
                 if (operation == "GetToolPanelConfigurationDirectory") return Write(GetToolPanelConfigurationDirectory(app, Read<ToolPanelDirectoryRequest>()));
@@ -830,6 +832,17 @@ namespace EBAssistant.Adapter
             return ids;
         }
 
+        private static HashSet<string> GetDirectGraphicTemplateNames(ObjectItem directory)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (object raw in directory.Children as IEnumerable)
+            {
+                var child = raw as ObjectItem;
+                if (child != null && IsGraphicTemplateItem(child)) names.Add(child.Name);
+            }
+            return names;
+        }
+
         private static List<string> WaitForAddedGraphicTemplateIds(
             ObjectItem directory,
             HashSet<string> before,
@@ -937,6 +950,162 @@ namespace EBAssistant.Adapter
             return result.Status == "completed"
                 ? Ok(result, "模板图形创建完成。")
                 : FailWithData("模板图形创建未全部完成，已停止后续复制。", result);
+        }
+
+        private static AdapterResponse<CreateNamedGraphicTemplatesResult> CreateNamedGraphicTemplates(
+            EbApplication app,
+            CreateNamedGraphicTemplatesRequest request)
+        {
+            var result = new CreateNamedGraphicTemplatesResult();
+            if (request == null ||
+                string.IsNullOrWhiteSpace(request.DirectoryId) ||
+                string.IsNullOrWhiteSpace(request.SourceTemplateId) ||
+                request.TargetNames == null ||
+                request.TargetNames.Count == 0)
+                return FailWithData("命名创建图形模板请求无效。", result);
+
+            var root = app.Folders.Stencils as ObjectItem;
+            if (root == null) return FailWithData("无法读取 EB 图形模板根目录。", result);
+
+            var directory = app.Utils.GetSnglObjectByID(request.DirectoryId) as ObjectItem;
+            if (directory == null) return FailWithData("所选目录已不存在，请刷新后重试。", result);
+            if (IsGraphicTemplateItem(directory)) return FailWithData("所选对象不是图形模板目录。", result);
+            if (HasGraphicTemplateDirectoryChildren(directory)) return FailWithData("只能在最后一级图形模板目录中新建。", result);
+
+            var source = app.Utils.GetSnglObjectByID(request.SourceTemplateId) as ObjectItem;
+            if (source == null || !IsGraphicTemplateItem(source))
+                return FailWithData("源模板图形已不存在。", result);
+            if (source.Parent == null || !string.Equals(source.Parent.ID, directory.ID, StringComparison.OrdinalIgnoreCase))
+                return FailWithData("源模板图形不在所选目录中。", result);
+
+            var duplicateRequestNames = request.TargetNames
+                .GroupBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1)
+                .Select(group => group.Key)
+                .ToList();
+            if (duplicateRequestNames.Count > 0)
+                return FailWithData("请求中存在重复目标名称：" + string.Join(", ", duplicateRequestNames) + "。", result);
+
+            var existingNames = GetDirectGraphicTemplateNames(directory);
+            var conflicts = request.TargetNames.Where(name => existingNames.Contains(name)).ToList();
+            if (conflicts.Count > 0)
+                return FailWithData("目标目录中已存在名称：" + string.Join(", ", conflicts) + "。", result);
+
+            result.DirectoryId = directory.ID;
+            result.DirectoryPath = BuildGraphicTemplateDirectoryPath(root, directory);
+            result.SourceTemplateId = source.ID;
+            result.SourceTemplateName = source.Name;
+
+            var processId = FindEbProcessId();
+            try
+            {
+                RunWithGraphicTemplateMismatchDialog(processId, delegate
+                {
+                    var utils = (IAucVbaInternUtils)app;
+                    utils.ExecuteCommand(AucCommand.aucCmdSymCopy, source);
+                    foreach (var targetName in request.TargetNames)
+                    {
+                        var before = GetDirectGraphicTemplateIds(directory);
+                        var record = new NamedGraphicTemplateCreationRecord { RequestedName = targetName };
+                        try
+                        {
+                            utils.ExecuteCommand(AucCommand.aucCmdSymPaste, directory);
+                            var added = WaitForAddedGraphicTemplateIds(directory, before, 5000);
+                            if (added.Count != 1)
+                                throw new InvalidOperationException(
+                                    added.Count == 0
+                                        ? "粘贴后无法在当前目录读回新增模板图形。"
+                                        : "粘贴后出现多个新增模板图形，无法唯一确认。");
+
+                            var created = app.Utils.GetSnglObjectByID(added[0]) as ObjectItem;
+                            if (created == null || !IsGraphicTemplateItem(created))
+                                throw new InvalidOperationException("新增对象无法作为模板图形读回。");
+
+                            SetObjectName(created, targetName);
+                            created.Store();
+                            directory.Store();
+
+                            var readback = app.Utils.GetSnglObjectByID(created.ID) as ObjectItem;
+                            if (readback == null || !string.Equals(readback.Name, targetName, StringComparison.OrdinalIgnoreCase))
+                                throw new InvalidOperationException("重命名后无法读回确认目标名称。");
+
+                            record.ConfirmedTemplateId = created.ID;
+                            record.Status = "created";
+                            record.Message = "创建、命名并读回确认。";
+                        }
+                        catch (Exception ex)
+                        {
+                            record.Status = "failed";
+                            record.Message = Describe(ex);
+                            result.Records.Add(record);
+                            break;
+                        }
+                        result.Records.Add(record);
+                    }
+                    return true;
+                });
+            }
+            catch (Exception ex)
+            {
+                result.Records.Add(new NamedGraphicTemplateCreationRecord { Status = "failed", Message = Describe(ex) });
+            }
+
+            ApplyNamedGraphicTemplateCreationSummary(result, request.TargetNames.Count);
+            return result.Status == "completed"
+                ? Ok(result, "命名图形模板创建完成。")
+                : FailWithData("命名图形模板创建未全部完成，已停止。", result);
+        }
+
+        private static AdapterResponse<OpenGraphicTemplateWithVisioResult> OpenGraphicTemplateWithVisio(
+            EbApplication app,
+            OpenGraphicTemplateWithVisioRequest request)
+        {
+            var result = new OpenGraphicTemplateWithVisioResult();
+            if (request == null || string.IsNullOrWhiteSpace(request.TemplateId))
+                return FailWithData("打开图形模板请求无效。", result);
+
+            var template = app.Utils.GetSnglObjectByID(request.TemplateId) as ObjectItem;
+            if (template == null || !IsGraphicTemplateItem(template))
+                return FailWithData("所选对象不是模板图形。", result);
+
+            result.TemplateId = template.ID;
+            result.TemplateName = template.Name;
+
+            try
+            {
+                var utils = (IAucVbaInternUtils)app;
+                utils.ExecuteCommand(AucCommand.aucCmdSymOpenMaster, template);
+                result.OpenMethod = "aucCmdSymOpenMaster";
+                result.Status = "opened";
+                result.Message = "已通过 API 命令打开图形模板。";
+                return Ok(result, result.Message);
+            }
+            catch (Exception first)
+            {
+                try
+                {
+                    var utils = (IAucVbaInternUtils)app;
+                    utils.ExecuteCommand(AucCommand.aucCmdSymOpen, template);
+                    result.OpenMethod = "aucCmdSymOpen";
+                    result.Status = "opened";
+                    result.Message = "已通过 API 备用命令打开图形模板。";
+                    return Ok(result, result.Message);
+                }
+                catch (Exception second)
+                {
+                    result.OpenMethod = "api";
+                    result.Status = "failed";
+                    result.Message = "API 打开失败：" + Describe(first) + "；备用命令失败：" + Describe(second);
+                    return FailWithData(result.Message, result);
+                }
+            }
+        }
+
+        private static void SetObjectName(ObjectItem item, string name)
+        {
+            var nameAttribute = item.Attributes.Find((AucAttribute)5);
+            if (nameAttribute == null) throw new InvalidOperationException("对象未暴露名称属性。");
+            nameAttribute.Value = name;
         }
 
         private static bool RunWithGraphicTemplateMismatchDialog(int processId, Func<bool> action)
@@ -1815,6 +1984,14 @@ namespace EBAssistant.Adapter
             result.Status = expectedCreated > 0 && result.CreatedCount >= expectedCreated
                 ? "completed"
                 : result.CreatedCount > 0 ? "partial" : "failed";
+        }
+
+        private static void ApplyNamedGraphicTemplateCreationSummary(CreateNamedGraphicTemplatesResult result, int requestedCount)
+        {
+            var created = result.Records.Count(record => record.Status == "created");
+            result.Status = created == requestedCount
+                ? "completed"
+                : created > 0 ? "partial" : "failed";
         }
 
         private static AdapterResponse<ToolPanelConfigurationIdentity> GetToolPanelConfigurationIdentity(EbApplication app)
@@ -3031,6 +3208,11 @@ WHERE o.OID=@entry AND o.CID=415;", connection))
     [DataContract] internal sealed class CreateGraphicTemplatesRequest { [DataMember] public string DirectoryId; [DataMember] public string SourceTemplateId; [DataMember] public int RequestedTotalCount; }
     [DataContract] internal sealed class GraphicTemplateCreationRecord { [DataMember] public int CopyNumber; [DataMember] public string ConfirmedTemplateId; [DataMember] public string Status; [DataMember] public string Message; }
     [DataContract] internal sealed class CreateGraphicTemplatesResult { [DataMember] public string Status; [DataMember] public string DirectoryId; [DataMember] public string DirectoryPath; [DataMember] public string SourceTemplateId; [DataMember] public string SourceTemplateName; [DataMember] public int RequestedTotalCount; [DataMember] public int OriginalCount; [DataMember] public int CreatedCount; [DataMember] public int ConfirmedFinalCount; [DataMember] public List<GraphicTemplateCreationRecord> Records = new List<GraphicTemplateCreationRecord>(); }
+    [DataContract] internal sealed class CreateNamedGraphicTemplatesRequest { [DataMember] public string DirectoryId; [DataMember] public string SourceTemplateId; [DataMember] public List<string> TargetNames = new List<string>(); }
+    [DataContract] internal sealed class NamedGraphicTemplateCreationRecord { [DataMember] public string RequestedName; [DataMember] public string ConfirmedTemplateId; [DataMember] public string Status; [DataMember] public string Message; }
+    [DataContract] internal sealed class CreateNamedGraphicTemplatesResult { [DataMember] public string Status; [DataMember] public string DirectoryId; [DataMember] public string DirectoryPath; [DataMember] public string SourceTemplateId; [DataMember] public string SourceTemplateName; [DataMember] public List<NamedGraphicTemplateCreationRecord> Records = new List<NamedGraphicTemplateCreationRecord>(); }
+    [DataContract] internal sealed class OpenGraphicTemplateWithVisioRequest { [DataMember] public string TemplateId; }
+    [DataContract] internal sealed class OpenGraphicTemplateWithVisioResult { [DataMember] public string TemplateId; [DataMember] public string TemplateName; [DataMember] public string OpenMethod; [DataMember] public string Status; [DataMember] public string Message; }
     [DataContract] internal sealed class ToolPanelConfigurationIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; }
     [DataContract] internal sealed class ToolPanelDirectoryNode { [DataMember] public string Id; [DataMember] public string Name; [DataMember] public string FullPath; [DataMember] public string Kind; [DataMember] public string TypeName; [DataMember] public List<ToolPanelDirectoryNode> Children = new List<ToolPanelDirectoryNode>(); }
     [DataContract] internal sealed class ToolPanelConfigurationTreeResult { [DataMember] public ToolPanelConfigurationIdentity Identity; [DataMember] public List<ToolPanelDirectoryNode> Nodes = new List<ToolPanelDirectoryNode>(); }

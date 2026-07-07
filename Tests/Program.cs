@@ -14,13 +14,18 @@ internal static class Program
             GraphicTemplateSelectionTests.Run();
             GraphicTemplateMigrationResultTests.Run();
             GraphicTemplateBatchMigrationTests.Run();
+            ComInvocationTests.Run();
+            VisioAutomationTests.Run();
+            VisioSaveDialogAutomationTests.Run();
             GraphicTemplateBatchExcelImporterTests.Run();
+            GraphicTemplateVisioBatchPlannerTests.Run();
+            GraphicTemplateVisioBatchLogWriterTests.Run();
             GraphicTemplateCreationTests.Run();
             WorksheetPreparationTests.Run();
             PermissionAssignmentSelectionTests.Run();
             PermissionAssignmentResultTests.Run();
             ToolPanelConfigurationTests.Run();
-            Console.WriteLine("PASS: 14 test groups");
+            Console.WriteLine("PASS: 19 test groups");
             return 0;
         }
         catch (Exception exception)

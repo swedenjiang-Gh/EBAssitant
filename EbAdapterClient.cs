@@ -99,6 +99,12 @@ public sealed class EbAdapterClient
     public Task<AdapterResponse<CreateGraphicTemplatesResult>> CreateGraphicTemplatesAsync(CreateGraphicTemplatesRequest request) =>
         InvokeAsync<CreateGraphicTemplatesResult>(_adapterPath, "CreateGraphicTemplates", request);
 
+    public Task<AdapterResponse<CreateNamedGraphicTemplatesResult>> CreateNamedGraphicTemplatesAsync(CreateNamedGraphicTemplatesRequest request) =>
+        InvokeAsync<CreateNamedGraphicTemplatesResult>(_adapterPath, "CreateNamedGraphicTemplates", request);
+
+    public Task<AdapterResponse<OpenGraphicTemplateWithVisioResult>> OpenGraphicTemplateWithVisioAsync(OpenGraphicTemplateWithVisioRequest request) =>
+        InvokeAsync<OpenGraphicTemplateWithVisioResult>(_adapterPath, "OpenGraphicTemplateWithVisio", request);
+
     public Task<AdapterResponse<ToolPanelConfigurationIdentity>> GetToolPanelConfigurationIdentityAsync() =>
         InvokeAsync<ToolPanelConfigurationIdentity>(_adapterPath, "GetToolPanelConfigurationIdentity", null);
 

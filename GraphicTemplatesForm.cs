@@ -9,6 +9,7 @@ public sealed class GraphicTemplatesForm : Form
     private readonly Button _move = new() { Text = "迁移模板图形", Width = 140, Height = 34, Enabled = false };
     private readonly Button _batchMove = new() { Text = "按表格迁移", Width = 120, Height = 34 };
     private readonly Button _create = new() { Text = "新建模板图形", Width = 140, Height = 34 };
+    private readonly Button _visioBatchCreate = new() { Text = "Visio批量创建", Width = 140, Height = 34 };
     private readonly List<Form> _childWindows = [];
     private EbAdapterClient? _client;
     private GraphicTemplateIdentity? _identity;
@@ -26,6 +27,7 @@ public sealed class GraphicTemplatesForm : Form
         toolbar.Controls.Add(_move);
         toolbar.Controls.Add(_batchMove);
         toolbar.Controls.Add(_create);
+        toolbar.Controls.Add(_visioBatchCreate);
 
         var split = new SplitContainer { Dock = DockStyle.Fill, SplitterDistance = 430 };
         split.Panel1.Controls.Add(_tree);
@@ -37,6 +39,7 @@ public sealed class GraphicTemplatesForm : Form
         _move.Click += async (_, _) => await MoveSelectedTemplatesAsync();
         _batchMove.Click += (_, _) => OpenBatchMigration();
         _create.Click += async (_, _) => await CreateTemplatesAsync();
+        _visioBatchCreate.Click += (_, _) => OpenVisioBatchCreate();
 
         Controls.Add(split);
         Controls.Add(toolbar);
@@ -187,6 +190,25 @@ public sealed class GraphicTemplatesForm : Form
         form.Show();
     }
 
+    private void OpenVisioBatchCreate()
+    {
+        if (_client is null || _cache is null) return;
+        if (_tree.SelectedNode?.Tag is not GraphicTemplateDirectoryNode selected)
+        {
+            MessageBox.Show(this, "请先选择目标图形模板目录。", "Visio批量创建", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+
+        var form = new GraphicTemplateVisioBatchCreateForm(_client, selected);
+        _childWindows.Add(form);
+        form.FormClosed += async (_, _) =>
+        {
+            _childWindows.Remove(form);
+            await RefreshDirectoryByIdAsync(selected.Id, false);
+        };
+        form.Show();
+    }
+
     private async Task CreateTemplatesAsync()
     {
         if (_client is null || _cache is null) return;
@@ -329,7 +351,7 @@ public sealed class GraphicTemplatesForm : Form
 
     private void SetBusy(bool busy, string message)
     {
-        _tree.Enabled = _templates.Enabled = _refresh.Enabled = _batchMove.Enabled = _create.Enabled = !busy;
+        _tree.Enabled = _templates.Enabled = _refresh.Enabled = _batchMove.Enabled = _create.Enabled = _visioBatchCreate.Enabled = !busy;
         _move.Enabled = !busy && _templates.CheckedItems.Count > 0;
         _status.Text = message;
         UseWaitCursor = busy;
