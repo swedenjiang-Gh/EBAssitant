@@ -13,6 +13,7 @@ public sealed class EbAdapterClient
     private readonly string _adapterPath;
 
     public static string LastDiscoveryMessage { get; private set; } = string.Empty;
+    public static string LastDiscoveryLogPath { get; private set; } = string.Empty;
 
     private EbAdapterClient(string adapterPath, ConnectionInfo connection)
     {
@@ -28,16 +29,30 @@ public sealed class EbAdapterClient
     {
         var result = new List<EbAdapterClient>();
         var diagnostics = new List<string>();
+        LastDiscoveryLogPath = string.Empty;
+        diagnostics.Add($"EBAssistant 版本：{AppDisplay.MainTitle}");
+        diagnostics.Add($"运行目录：{AppContext.BaseDirectory}");
         foreach (var version in new[] { "2023", "2024", "2025" })
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Adapters", version, $"EBAssistant.Adapter{version}.exe");
+            diagnostics.Add($"EB {version} 适配器路径：{path}");
             if (!File.Exists(path))
             {
                 diagnostics.Add($"EB {version} 适配器不存在：{path}");
                 continue;
             }
 
-            var response = await InvokeAsync<ConnectionInfo>(path, "GetConnectionInfo", null);
+            AdapterResponse<ConnectionInfo> response;
+            try
+            {
+                response = await InvokeAsync<ConnectionInfo>(path, "GetConnectionInfo", null);
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"EB {version} 适配器调用异常：{ex.GetType().Name}: {ex.Message}");
+                continue;
+            }
+
             if (response.Success && response.Data?.IsActive == true)
             {
                 result.Add(new EbAdapterClient(path, response.Data));
@@ -47,6 +62,19 @@ public sealed class EbAdapterClient
                 diagnostics.Add($"EB {version}：{response.Message}");
             }
         }
+        if (result.Count == 0)
+        {
+            try
+            {
+                LastDiscoveryLogPath = AdapterDiscoveryLogWriter.Write(diagnostics);
+                diagnostics.Add($"诊断日志：{LastDiscoveryLogPath}");
+            }
+            catch (Exception ex)
+            {
+                diagnostics.Add($"诊断日志写入失败：{ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
         LastDiscoveryMessage = string.Join(Environment.NewLine, diagnostics);
         return result;
     }
@@ -154,6 +182,7 @@ public sealed class EbAdapterClient
 
     private static async Task<AdapterResponse<T>> InvokeAsync<T>(string path, string operation, object? request)
     {
+        const int adapterTimeoutMilliseconds = 30000;
         var startInfo = new ProcessStartInfo
         {
             FileName = path,
@@ -167,7 +196,18 @@ public sealed class EbAdapterClient
             StandardErrorEncoding = System.Text.Encoding.UTF8
         };
 
-        using var process = Process.Start(startInfo);
+        Process? process;
+        try
+        {
+            process = Process.Start(startInfo);
+        }
+        catch (Exception ex)
+        {
+            return new AdapterResponse<T> { Message = $"无法启动 EB 适配器：{path}{Environment.NewLine}{ex.GetType().Name}: {ex.Message}" };
+        }
+
+        using (process)
+        {
         if (process is null)
         {
             return new AdapterResponse<T> { Message = "无法启动 EB 适配器。" };
@@ -181,13 +221,24 @@ public sealed class EbAdapterClient
 
         var outputTask = process.StandardOutput.ReadToEndAsync();
         var errorTask = process.StandardError.ReadToEndAsync();
-        await process.WaitForExitAsync();
+        var waitTask = process.WaitForExitAsync();
+        if (await Task.WhenAny(waitTask, Task.Delay(adapterTimeoutMilliseconds)) != waitTask)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            return new AdapterResponse<T>
+            {
+                Message = $"EB 适配器执行超时：{Path.GetFileName(path)} {operation} 超过 {adapterTimeoutMilliseconds / 1000} 秒未返回。请确认 EB 与 EBAssistant 使用同一用户和同一权限级别运行。"
+            };
+        }
+
+        await waitTask;
         var output = await outputTask;
         var error = await errorTask;
 
         if (string.IsNullOrWhiteSpace(output))
         {
-            return new AdapterResponse<T> { Message = string.IsNullOrWhiteSpace(error) ? "EB 适配器没有返回结果。" : error.Trim() };
+            var exit = process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return new AdapterResponse<T> { Message = string.IsNullOrWhiteSpace(error) ? $"EB 适配器没有返回结果。ExitCode={exit}" : $"EB 适配器错误。ExitCode={exit}{Environment.NewLine}{error.Trim()}" };
         }
 
         try
@@ -197,7 +248,15 @@ public sealed class EbAdapterClient
         }
         catch (JsonException ex)
         {
-            return new AdapterResponse<T> { Message = $"EB 适配器结果格式错误：{ex.Message}" };
+            return new AdapterResponse<T> { Message = $"EB 适配器结果格式错误：{ex.Message}{Environment.NewLine}输出片段：{TakeSnippet(output)}{Environment.NewLine}错误输出：{TakeSnippet(error)}" };
         }
+        }
+    }
+
+    private static string TakeSnippet(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return "";
+        var trimmed = value.Trim();
+        return trimmed.Length <= 800 ? trimmed : trimmed[..800] + "...";
     }
 }

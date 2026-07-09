@@ -1,11 +1,20 @@
 param(
-    [string]$Version = "1.0.0",
+    [string]$Version = "",
     [string]$Configuration = "Release"
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
+$projectPath = Join-Path $root "EBAssistant.csproj"
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $versionNode = Select-Xml -Path $projectPath -XPath "/Project/PropertyGroup/Version" | Select-Object -First 1
+    if ($null -eq $versionNode -or [string]::IsNullOrWhiteSpace($versionNode.Node.InnerText)) {
+        throw "Version was not provided and $projectPath does not define <Version>."
+    }
+    $Version = $versionNode.Node.InnerText.Trim()
+}
+
 $artifacts = Join-Path $root "artifacts\installer"
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $stage = Join-Path $artifacts "work\$stamp"

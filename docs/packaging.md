@@ -39,8 +39,10 @@ WiX 通过仓库根目录的 `dotnet-tools.json` 还原。`.wix/` 是本机扩�
 ## 打包命令
 
 ```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\packaging\package-installer.ps1 -Version 1.0.0
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\packaging\package-installer.ps1
 ```
+
+未传入 `-Version` 时，脚本会读取 `EBAssistant.csproj` 中的 `<Version>` 作为 MSI 版本号。需要临时指定版本时仍可显式传入 `-Version 1.1.1`。
 
 脚本会：
 
@@ -55,7 +57,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\packaging\package-inst
 可以用 administrative install 解包验证 MSI 内容，不会真正安装到系统：
 
 ```powershell
-$msi = Resolve-Path .\artifacts\installer\EBAssistant-1.0.0-x86.msi
+$msi = Resolve-Path .\artifacts\installer\EBAssistant-1.1.1-x86.msi
 $target = Join-Path (Resolve-Path .\artifacts\installer) "admin-test\manual"
 New-Item -ItemType Directory -Path $target -Force | Out-Null
 Start-Process msiexec.exe -ArgumentList @('/a', $msi.Path, '/qn', "TARGETDIR=$target") -Wait
@@ -79,3 +81,12 @@ PFiles/EBAssistant/Templates/迁移模板图形模板.xlsx
 PFiles/EBAssistant/Templates/帮助手册.pdf
 PFiles/EBAssistant/Templates/版本信息.txt
 ```
+
+## 目标机器排查
+
+如果目标机器已经打开 EB 但 EBAssistant 提示未检测到 EB：
+
+- 确认 EB 和 EBAssistant 使用同一 Windows 用户、同一权限级别运行。
+- 检查安装目录下是否存在 `Adapters/2024/EBAssistant.Adapter2024.exe` 和同目录 `Interop.Aucotec.dll`。
+- 打开提示中的诊断日志，默认位于 `%LOCALAPPDATA%\EBAssistant\Logs\Diagnostics`。
+- 诊断日志会记录适配器路径、COM ProgID 是否注册、适配器位数、运行用户、是否管理员、EB 进程路径和适配器返回信息。

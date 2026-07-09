@@ -10,6 +10,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Runtime.Serialization;
 using System.Runtime.Serialization.Json;
+using System.Security.Principal;
 using System.Text;
 using System.Threading;
 using System.Windows.Automation;
@@ -98,6 +99,7 @@ namespace EBAssistant.Adapter
 
         private static EbApplication GetActiveApplication(List<string> diagnostics)
         {
+            AddAdapterEnvironmentDiagnostics(diagnostics);
             foreach (var progId in new[] { ProgId, "EngineeringBase.Application", "Aucotec.Application" })
             {
                 try
@@ -198,17 +200,35 @@ namespace EBAssistant.Adapter
         private static ClientProcessProbe ProbeEngineeringBaseProcesses(List<string> diagnostics)
         {
             var probe = new ClientProcessProbe();
-            var processes = Process.GetProcessesByName("EngineeringBase");
-            AddDiagnostic(diagnostics, "EngineeringBase process count: " + processes.Length.ToString(CultureInfo.InvariantCulture));
+            Process[] processes;
+            try
+            {
+                processes = Process.GetProcesses();
+            }
+            catch (Exception ex)
+            {
+                AddDiagnostic(diagnostics, "Process enumeration failed: " + ex.GetType().Name + ": " + ex.Message);
+                return probe;
+            }
+
+            var engineeringBaseCount = 0;
             foreach (var process in processes)
             {
                 try
                 {
+                    if (process.ProcessName.IndexOf("EngineeringBase", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    engineeringBaseCount++;
                     probe.AnyEngineeringBaseProcess = true;
                     var path = process.MainModule == null ? "" : process.MainModule.FileName;
                     AddDiagnostic(diagnostics, "EngineeringBase process " + process.Id.ToString(CultureInfo.InvariantCulture) + " path: " + (string.IsNullOrWhiteSpace(path) ? "<empty>" : path));
                     if (!string.IsNullOrWhiteSpace(path) && path.IndexOf(ExpectedInstallFolder, StringComparison.OrdinalIgnoreCase) >= 0)
+                    {
                         probe.ExpectedClientRunning = true;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(path))
+                    {
+                        AddDiagnostic(diagnostics, "EngineeringBase process path does not contain expected EB " + Version + " marker '" + ExpectedInstallFolder + "'.");
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -220,7 +240,35 @@ namespace EBAssistant.Adapter
                     process.Dispose();
                 }
             }
+            AddDiagnostic(diagnostics, "EngineeringBase-like process count: " + engineeringBaseCount.ToString(CultureInfo.InvariantCulture));
             return probe;
+        }
+
+        private static void AddAdapterEnvironmentDiagnostics(List<string> diagnostics)
+        {
+            AddDiagnostic(diagnostics, "Adapter version: EB " + Version + ", ProgID=" + ProgId);
+            AddDiagnostic(diagnostics, "Adapter executable: " + Safe(delegate { return Process.GetCurrentProcess().MainModule.FileName; }, "<unknown>"));
+            AddDiagnostic(diagnostics, "Adapter process architecture: " + (Environment.Is64BitProcess ? "64-bit" : "32-bit"));
+            AddDiagnostic(diagnostics, "Adapter user: " + Safe(delegate { return WindowsIdentity.GetCurrent().Name; }, "<unknown>"));
+            AddDiagnostic(diagnostics, "Adapter elevated: " + IsCurrentProcessElevated().ToString(CultureInfo.InvariantCulture));
+            try
+            {
+                var registeredType = Type.GetTypeFromProgID(ProgId);
+                AddDiagnostic(diagnostics, "ProgID registered: " + (registeredType != null).ToString(CultureInfo.InvariantCulture));
+            }
+            catch (Exception ex)
+            {
+                AddDiagnostic(diagnostics, "ProgID registration check failed: " + ex.GetType().Name + ": " + ex.Message);
+            }
+        }
+
+        private static bool IsCurrentProcessElevated()
+        {
+            using (var identity = WindowsIdentity.GetCurrent())
+            {
+                var principal = new WindowsPrincipal(identity);
+                return principal.IsInRole(WindowsBuiltInRole.Administrator);
+            }
         }
 
         private static string BuildConnectionFailureMessage(List<string> diagnostics)

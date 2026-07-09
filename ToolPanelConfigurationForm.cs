@@ -75,7 +75,10 @@ public sealed class ToolPanelConfigurationForm : Form
         if (active.Count == 0)
         {
             SetBusy(false, "未检测到当前活动 EB。");
-            MessageBox.Show(this, "请先打开 EB 并连接数据库。", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            var detail = string.IsNullOrWhiteSpace(EbAdapterClient.LastDiscoveryMessage)
+                ? string.Empty
+                : $"{Environment.NewLine}{Environment.NewLine}诊断信息：{Environment.NewLine}{EbAdapterClient.LastDiscoveryMessage}";
+            MessageBox.Show(this, $"请先打开 EB 并连接数据库。{detail}", Text, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
