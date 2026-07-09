@@ -21,7 +21,9 @@ MSI 安装界面允许用户选择安装路径，并创建开始菜单快捷方�
 - EB 2023 adapter：`Adapters/2023/EBAssistant.Adapter2023.exe`
 - EB 2024 adapter：`Adapters/2024/EBAssistant.Adapter2024.exe`
 - EB 2025 占位 adapter：`Adapters/2025/EBAssistant.Adapter2025.exe`
-- `Templates/` 下的 Excel 模板、帮助 PDF、版本信息
+- `Templates/` 下的 Excel 模板
+- `docs/操作手册.md`
+- 根目录 `CHANGELOG.md`
 
 安装包不包含 Engineering Base 本体，也不注册 Aucotec COM。目标机器仍需预先安装对应版本 EB，并能正常打开目标数据库。
 
@@ -42,7 +44,7 @@ WiX 通过仓库根目录的 `dotnet-tools.json` 还原。`.wix/` 是本机扩�
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\packaging\package-installer.ps1
 ```
 
-未传入 `-Version` 时，脚本会读取 `EBAssistant.csproj` 中的 `<Version>` 作为 MSI 版本号。需要临时指定版本时仍可显式传入 `-Version 1.1.1`。
+未传入 `-Version` 时，脚本会读取 `EBAssistant.csproj` 中的 `<Version>` 作为 MSI 版本号。需要临时指定版本时仍可显式传入 `-Version 1.1.2`。
 
 脚本会：
 
@@ -57,7 +59,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\packaging\package-inst
 可以用 administrative install 解包验证 MSI 内容，不会真正安装到系统：
 
 ```powershell
-$msi = Resolve-Path .\artifacts\installer\EBAssistant-1.1.1-x86.msi
+$msi = Resolve-Path .\artifacts\installer\EBAssistant-1.1.2-x86.msi
 $target = Join-Path (Resolve-Path .\artifacts\installer) "admin-test\manual"
 New-Item -ItemType Directory -Path $target -Force | Out-Null
 Start-Process msiexec.exe -ArgumentList @('/a', $msi.Path, '/qn', "TARGETDIR=$target") -Wait
@@ -78,8 +80,8 @@ PFiles/EBAssistant/Templates/工作表模板.xlsx
 PFiles/EBAssistant/Templates/权限配置模板.xlsx
 PFiles/EBAssistant/Templates/类型定义模板.xlsx
 PFiles/EBAssistant/Templates/迁移模板图形模板.xlsx
-PFiles/EBAssistant/Templates/帮助手册.pdf
-PFiles/EBAssistant/Templates/版本信息.txt
+PFiles/EBAssistant/docs/操作手册.md
+PFiles/EBAssistant/CHANGELOG.md
 ```
 
 ## 目标机器排查

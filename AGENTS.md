@@ -5,7 +5,7 @@
 读取的目录结构均要保存缓存，以便下次直接读取；只有用户刷新时才重新读取并更新缓存。
 导入的数据需要做只读预览。
 涉及 EB 写入的任务完成后，都要给用户展示结果、保存日志并提供日志路径入口。
-以后修改程序功能或用户可见行为时，开发过程中先累计改动；在提交代码前统一决定是否递增 `EBAssistant.csproj` 的 `<Version>`，并同步更新 `Templates\版本信息.txt` 与 `docs\操作手册.md`。补丁级、小版本或大版本由开发者按提交影响范围判断。
+以后修改程序功能或用户可见行为时，开发过程中先累计改动；在提交代码前统一决定是否递增 `EBAssistant.csproj` 的 `<Version>`，并同步更新根目录 `CHANGELOG.md` 与 `docs\操作手册.md`。补丁级、小版本或大版本由开发者按提交影响范围判断。
 兄弟文件夹 `EngineeringBaseCodemap` 是知识库，可供开发参考，但不要把它的治理体系搬进本桌面程序。
 
 ## 1. 项目定位
@@ -25,8 +25,8 @@ EBAssistant 是面向 Aucotec Engineering Base（EB）的 Windows 桌面辅助�
 
 - 文件 / 下载模板：扫描输出目录 `Templates` 下所有 `.xlsx` 和 `.xls` 文件并复制给用户。
 - 文件 / 日志：打开 `%LOCALAPPDATA%\EBAssistant\Logs`。
-- 关于 / 帮助：打开 `Templates\帮助手册.pdf`。
-- 关于 / 版本信息：读取 `Templates\版本信息.txt`。
+- 关于 / 帮助：打开 `docs\操作手册.md`。
+- 关于 / 版本信息：读取程序根目录 `CHANGELOG.md`。
 
 ## 2. 目录与技术栈
 
@@ -504,7 +504,8 @@ dotnet run --project .\Tests\EBAssistant.Tests.csproj
 - `Adapters/2025/Program.cs`：EB 2025 占位适配器
 - `build.ps1`：完整构建入口
 - `Tests/EBAssistant.Tests.csproj`：轻量自动测试入口
-- `Templates/`：Excel 模板、帮助文档和版本信息
+- `Templates/`：Excel 模板
+- `CHANGELOG.md`：版本更新日志
 - `docs/操作手册.md`：用户操作手册
 - `README.md`：项目总览
 - `docs/worksheet-development-handoff.md`：工作表功能最终路线、失败路径和交接

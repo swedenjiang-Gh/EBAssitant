@@ -43,9 +43,10 @@ EB 2023 和 EB 2024 通过强类型 COM 适配器连接。EB 2025 适配器目�
 ```text
 EBAssistant/
   Adapters/                 EB 2023/2024/2025 适配器项目
-  Templates/                Excel 模板、帮助手册、版本信息
+  Templates/                Excel 模板
   Tests/                    本地轻量测试项目
   docs/                     设计记录、复盘和操作文档
+  CHANGELOG.md              版本更新日志
   EBAssistant.csproj        WinForms 主程序
   build.ps1                 主程序与适配器完整构建入口
 ```
@@ -108,7 +109,7 @@ dotnet run --project .\Tests\EBAssistant.Tests.csproj
 
 ## 模板、缓存与日志
 
-内置 Excel 模板位于 `Templates/`，主界面“文件 / 下载模板”可复制到用户选择的目录。
+内置 Excel 模板位于 `Templates/`，主界面“文件 / 下载模板”可复制到用户选择的目录。主界面“关于 / 帮助”打开 `docs/操作手册.md`。
 
 缓存默认位于：
 

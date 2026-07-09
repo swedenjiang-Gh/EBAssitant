@@ -163,26 +163,38 @@ public sealed class MainForm : Form
 
     private void OpenHelpManual()
     {
-        var path = GetTemplatePath("帮助手册.pdf");
+        var path = Path.Combine(AppContext.BaseDirectory, "docs", "操作手册.md");
         if (!File.Exists(path))
         {
-            MessageBox.Show(this, "未找到帮助手册.pdf。", "帮助", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, "未找到 docs\\操作手册.md。", "帮助", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
 
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        try
         {
-            FileName = path,
-            UseShellExecute = true
-        });
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true
+            });
+        }
+        catch
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "notepad.exe",
+                ArgumentList = { path },
+                UseShellExecute = true
+            });
+        }
     }
 
     private void ShowVersionInfo()
     {
-        var path = GetTemplatePath("版本信息.txt");
+        var path = Path.Combine(AppContext.BaseDirectory, "CHANGELOG.md");
         if (!File.Exists(path))
         {
-            MessageBox.Show(this, "未找到版本信息.txt。", "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, "未找到 CHANGELOG.md。", "版本信息", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
         }
 
