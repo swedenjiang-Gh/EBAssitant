@@ -23,6 +23,7 @@ public static class ExcelAttributeImporter
 
                 var name = Convert.ToString(reader.GetValue(1))?.Trim() ?? "";
                 var sourceType = Convert.ToString(reader.GetValue(2))?.Trim() ?? "";
+                var comment = Convert.ToString(reader.GetValue(3))?.Trim() ?? "";
                 if (name.Length == 0 && sourceType.Length == 0)
                 {
                     continue;
@@ -33,7 +34,8 @@ public static class ExcelAttributeImporter
                     RowNumber = rowNumber,
                     Name = name,
                     SourceType = sourceType,
-                    EbType = types.TryGetValue(sourceType, out var type) ? type : ""
+                    EbType = types.TryGetValue(sourceType, out var type) ? type : "",
+                    Comment = comment
                 });
             }
             break;

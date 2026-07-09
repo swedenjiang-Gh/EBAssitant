@@ -34,9 +34,9 @@ public static class AttributeCreationLogWriter
             $"回滚失败：{result.Records.Count(x => x.Status == "回滚失败")}",
             $"未处理：{result.Records.Count(x => x.Status == "未处理")}",
             "",
-            "Excel行号\t属性名称\t属性类型\t状态\t说明"
+            "Excel行号\t属性名称\t属性类型\t注释\t状态\t说明"
         };
-        lines.AddRange(result.Records.Select(x => $"{x.RowNumber}\t{x.Name}\t{x.Type}\t{x.Status}\t{x.Message}"));
+        lines.AddRange(result.Records.Select(x => $"{x.RowNumber}\t{x.Name}\t{x.Type}\t{x.Comment}\t{x.Status}\t{x.Message}"));
         if (result.RollbackErrors.Count > 0)
         {
             lines.Add("");

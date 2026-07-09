@@ -88,7 +88,7 @@ public sealed class CreateAttributesForm : Form
         var request = new CreateAttributesRequest
         {
             TargetFolderId = _folder.Id,
-            Attributes = _rows.Select(x => new CreateAttributeItem { RowNumber = x.RowNumber, Name = x.Name.Trim(), Type = x.EbType, Digits = 0 }).ToList()
+            Attributes = _rows.Select(x => new CreateAttributeItem { RowNumber = x.RowNumber, Name = x.Name.Trim(), Type = x.EbType, Comment = x.Comment.Trim(), Digits = 0 }).ToList()
         };
         var response = await _client.CreateAttributesAsync(request);
         UseWaitCursor = false;
@@ -121,6 +121,7 @@ public sealed class CreateAttributesForm : Form
                 RowNumber = x.RowNumber,
                 Name = x.Name,
                 Type = x.Type,
+                Comment = x.Comment,
                 Status = "创建失败",
                 Message = message
             }).ToList()

@@ -360,12 +360,14 @@ namespace EBAssistant.Adapter
                         RowNumber = item.RowNumber,
                         Name = item.Name.Trim(),
                         Type = item.Type,
+                        Comment = (item.Comment ?? "").Trim(),
                         Status = "创建失败",
                         Message = "属性创建尚未完成。"
                     };
                     var createdItem = new CreatedAttribute { Object = obj, Record = record };
                     created.Add(createdItem);
                     result.Records.Add(record);
+                    SetAttributeComment(obj, item.Comment);
                     obj.Store();
                     root.Store();
                     if (!obj.MoveTo(target)) throw new InvalidOperationException("无法将属性移动到目录：" + item.Name);
@@ -395,6 +397,7 @@ namespace EBAssistant.Adapter
                         RowNumber = failed.RowNumber,
                         Name = failed.Name.Trim(),
                         Type = failed.Type,
+                        Comment = (failed.Comment ?? "").Trim(),
                         Status = "创建失败",
                         Message = error
                     });
@@ -411,6 +414,7 @@ namespace EBAssistant.Adapter
                         RowNumber = pending.RowNumber,
                         Name = pending.Name.Trim(),
                         Type = pending.Type,
+                        Comment = (pending.Comment ?? "").Trim(),
                         Status = "未处理",
                         Message = "前序属性创建失败，已停止后续操作。"
                     });
@@ -452,6 +456,15 @@ namespace EBAssistant.Adapter
                     Data = result
                 };
             }
+        }
+
+        private static void SetAttributeComment(ObjectItem item, string comment)
+        {
+            var value = (comment ?? "").Trim();
+            if (value.Length == 0) return;
+            var attribute = item.Attributes.Find(AucAttribute.aucAttrComment);
+            if (attribute == null) throw new InvalidOperationException("新属性未暴露注释属性，无法写入注释。");
+            attribute.Value = value;
         }
 
         private static AdapterResponse<CreateFolderResult> CreateAttributeFolder(EbApplication app, CreateFolderRequest request)
@@ -3289,9 +3302,9 @@ WHERE o.OID=@entry AND o.CID=415;", connection))
     [DataContract] internal sealed class AttributeFolderIdentity { [DataMember] public string Version; [DataMember] public string RootId; [DataMember] public string RootName; }
     [DataContract] internal sealed class FolderTreeResult { [DataMember] public List<AttributeFolderNode> Folders = new List<AttributeFolderNode>(); [DataMember] public List<ExistingAttribute> ExistingAttributes = new List<ExistingAttribute>(); }
     [DataContract] internal sealed class CreateAttributesRequest { [DataMember] public string TargetFolderId; [DataMember] public List<CreateAttributeItem> Attributes; }
-    [DataContract] internal sealed class CreateAttributeItem { [DataMember] public int RowNumber; [DataMember] public string Name; [DataMember] public string Type; [DataMember] public int Digits; }
+    [DataContract] internal sealed class CreateAttributeItem { [DataMember] public int RowNumber; [DataMember] public string Name; [DataMember] public string Type; [DataMember] public string Comment; [DataMember] public int Digits; }
     internal sealed class CreatedAttribute { public ObjectItem Object; public CreateAttributeOperationRecord Record; public bool Completed; }
-    [DataContract] internal sealed class CreateAttributeOperationRecord { [DataMember] public int RowNumber; [DataMember] public string Name; [DataMember] public string Type; [DataMember] public string Status; [DataMember] public string Message; }
+    [DataContract] internal sealed class CreateAttributeOperationRecord { [DataMember] public int RowNumber; [DataMember] public string Name; [DataMember] public string Type; [DataMember] public string Comment; [DataMember] public string Status; [DataMember] public string Message; }
     [DataContract] internal sealed class CreateAttributesResult { [DataMember] public string Status; [DataMember] public string Message; [DataMember] public string TargetFolder; [DataMember] public int CreatedCount; [DataMember] public bool RolledBack; [DataMember] public List<string> CreatedNames = new List<string>(); [DataMember] public List<string> RollbackErrors = new List<string>(); [DataMember] public List<CreateAttributeOperationRecord> Records = new List<CreateAttributeOperationRecord>(); }
     [DataContract] internal sealed class CreateFolderRequest { [DataMember] public string ParentFolderId; [DataMember] public string Name; }
     [DataContract] internal sealed class CreateFolderResult { [DataMember] public string Id; [DataMember] public string Name; }

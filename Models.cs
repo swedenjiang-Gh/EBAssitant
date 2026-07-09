@@ -56,6 +56,7 @@ public sealed class CreateAttributeItem
     public int RowNumber { get; set; }
     public string Name { get; set; } = "";
     public string Type { get; set; } = "";
+    public string Comment { get; set; } = "";
     public int Digits { get; set; }
 }
 
@@ -76,6 +77,7 @@ public sealed class CreateAttributeOperationRecord
     public int RowNumber { get; set; }
     public string Name { get; set; } = "";
     public string Type { get; set; } = "";
+    public string Comment { get; set; } = "";
     public string Status { get; set; } = "";
     public string Message { get; set; } = "";
 }
@@ -104,6 +106,7 @@ public sealed class ImportedAttributeRow
     public string Name { get; set; } = "";
     public string SourceType { get; set; } = "";
     public string EbType { get; set; } = "";
+    public string Comment { get; set; } = "";
     public string Validation { get; set; } = "";
 
     [JsonIgnore]

@@ -6,7 +6,10 @@ internal static class Program
     {
         try
         {
+            System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+            AppDisplayTests.Run();
             WorksheetNameResolverTests.Run();
+            ExcelAttributeImporterTests.Run();
             WorksheetColumnWidthCalculatorTests.Run();
             WorksheetImportBuilderTests.Run();
             ProjectTemplateCacheTests.Run();
@@ -25,7 +28,7 @@ internal static class Program
             PermissionAssignmentSelectionTests.Run();
             PermissionAssignmentResultTests.Run();
             ToolPanelConfigurationTests.Run();
-            Console.WriteLine("PASS: 19 test groups");
+            Console.WriteLine("PASS: 21 test groups");
             return 0;
         }
         catch (Exception exception)
