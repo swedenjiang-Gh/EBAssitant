@@ -16,6 +16,7 @@ public sealed class GraphicTemplateReadDiagnostics
     {
         "GetGraphicTemplateTree" => 180000,
         "GetGraphicTemplateDirectory" => 60000,
+        "GetAttributeFolderTree" => 60000,
         _ => 30000
     };
 

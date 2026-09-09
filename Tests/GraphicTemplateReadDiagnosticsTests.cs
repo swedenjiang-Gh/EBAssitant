@@ -8,6 +8,7 @@ internal static class GraphicTemplateReadDiagnosticsTests
     {
         Assert.Equal(180000, GraphicTemplateReadDiagnostics.GetTimeoutMilliseconds("GetGraphicTemplateTree"));
         Assert.Equal(60000, GraphicTemplateReadDiagnostics.GetTimeoutMilliseconds("GetGraphicTemplateDirectory"));
+        Assert.Equal(60000, GraphicTemplateReadDiagnostics.GetTimeoutMilliseconds("GetAttributeFolderTree"));
         Assert.Equal(30000, GraphicTemplateReadDiagnostics.GetTimeoutMilliseconds("GetConnectionInfo"));
         Assert.Equal(30000, GraphicTemplateReadDiagnostics.GetTimeoutMilliseconds("CreateGraphicTemplates"));
         ReportsAndPersistsProgressBeforeProcessExit();

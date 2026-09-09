@@ -309,16 +309,7 @@ namespace EBAssistant.Adapter
         {
             var root = app.Folders.Attributes;
             var result = new FolderTreeResult();
-            foreach (object raw in root.Children as IEnumerable)
-            {
-                var child = raw as ObjectItem;
-                if (child == null) continue;
-                if (child.Kind == AucObjectKind.aucObjFolderForUserAttributes)
-                {
-                    result.Folders.Add(ReadFolder(child, root.Name));
-                }
-            }
-            CollectExistingAttributes(root.Children, result.ExistingAttributes);
+            ReadAttributeFolderChildren(root.Children, root.Name, result.Folders, result.ExistingAttributes);
             return Ok(result, "属性目录读取成功。");
         }
 
@@ -328,19 +319,30 @@ namespace EBAssistant.Adapter
             return Ok(new AttributeFolderIdentity { Version = Version, RootId = root.ID, RootName = root.Name }, "属性目录身份读取成功。");
         }
 
-        private static AttributeFolderNode ReadFolder(ObjectItem folder, string parentPath)
+        private static void ReadAttributeFolderChildren(
+            IEnumerable children,
+            string parentPath,
+            List<AttributeFolderNode> folders,
+            List<ExistingAttribute> existingAttributes)
         {
-            var path = string.IsNullOrWhiteSpace(parentPath) ? folder.Name : parentPath + " / " + folder.Name;
-            var node = new AttributeFolderNode { Id = folder.ID, Name = folder.Name, FullPath = path };
-            foreach (object raw in folder.Children as IEnumerable)
+            foreach (object raw in children)
             {
                 var child = raw as ObjectItem;
-                if (child != null && child.Kind == AucObjectKind.aucObjFolderForUserAttributes)
+                if (child == null) continue;
+                var kind = child.Kind;
+                if (kind == AucObjectKind.aucObjUserAttribute)
                 {
-                    node.Children.Add(ReadFolder(child, path));
+                    existingAttributes.Add(new ExistingAttribute { Name = child.Name });
+                }
+                else if (kind == AucObjectKind.aucObjFolderForUserAttributes)
+                {
+                    var name = child.Name;
+                    var path = string.IsNullOrWhiteSpace(parentPath) ? name : parentPath + " / " + name;
+                    var node = new AttributeFolderNode { Id = child.ID, Name = name, FullPath = path };
+                    folders.Add(node);
+                    ReadAttributeFolderChildren(child.Children, path, node.Children, existingAttributes);
                 }
             }
-            return node;
         }
 
         private static void CollectExistingAttributes(IEnumerable children, List<ExistingAttribute> result)
