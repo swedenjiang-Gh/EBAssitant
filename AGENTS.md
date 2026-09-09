@@ -439,6 +439,15 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1
 dotnet run --project .\Tests\EBAssistant.Tests.csproj
 ```
 
+提交代码前默认验证：
+
+1. 运行 `dotnet run --project .\Tests\EBAssistant.Tests.csproj`。
+2. 运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\build.ps1`。
+3. 运行 `git diff --check`。
+4. 按改动范围做必要的针对性检查。
+
+不要每次提交都打包 MSI。只有修改安装包脚本、发布资源、输出目录复制规则、安装后路径、适配器发布结构，或用户明确要求打包、安装包、MSI、发布包时，才执行 MSI 打包和解包验证。
+
 当前完整构建会：
 
 1. 使用 `dotnet build` 构建主程序。

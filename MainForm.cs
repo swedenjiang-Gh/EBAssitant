@@ -97,6 +97,14 @@ public sealed class MainForm : Form
         downloadTemplateItem.Click += (_, _) => DownloadExcelTemplates();
         fileMenu.DropDownItems.Add(downloadTemplateItem);
 
+        var toolsMenu = new ToolStripMenuItem("辅助工具");
+        var attributeIdMatchItem = new ToolStripMenuItem("属性ID匹配");
+        attributeIdMatchItem.Click += (_, _) => ShowFutureTool("属性ID匹配");
+        var visioGroupItem = new ToolStripMenuItem("VISIO图形组合");
+        visioGroupItem.Click += (_, _) => ShowFutureTool("VISIO图形组合");
+        toolsMenu.DropDownItems.Add(attributeIdMatchItem);
+        toolsMenu.DropDownItems.Add(visioGroupItem);
+
         var aboutMenu = new ToolStripMenuItem("关于");
         var helpItem = new ToolStripMenuItem("帮助");
         helpItem.Click += (_, _) => OpenHelpManual();
@@ -109,9 +117,21 @@ public sealed class MainForm : Form
         logMenu.Click += (_, _) => OpenLogFolder();
 
         menuStrip.Items.Add(fileMenu);
+        menuStrip.Items.Add(toolsMenu);
         menuStrip.Items.Add(logMenu);
         menuStrip.Items.Add(aboutMenu);
         return menuStrip;
+    }
+
+    private void ShowFutureTool(string toolName)
+    {
+        _statusLabel.Text = $"已选择：{toolName}";
+        MessageBox.Show(
+            this,
+            $"{toolName}功能将在后续开发中实现。",
+            toolName,
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
     }
 
     private void DownloadExcelTemplates()
