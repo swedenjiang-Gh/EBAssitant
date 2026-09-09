@@ -31,15 +31,23 @@ namespace EBAssistant.Adapter
         private const string ExpectedInstallFolder = "Engineering Base 730";
 #endif
 
+        private static GraphicTemplateReadProgress graphicReadProgress;
+
         private static int Main(string[] args)
         {
             Console.OutputEncoding = new UTF8Encoding(false);
             try
             {
                 var operation = args.Length == 0 ? "" : args[0];
+                if (operation == "GetGraphicTemplateTree" || operation == "GetGraphicTemplateDirectory")
+                {
+                    graphicReadProgress = new GraphicTemplateReadProgress();
+                    graphicReadProgress.Report("正在连接 EB " + Version, true);
+                }
                 if (operation == "GetConnectionInfo") return Write(GetConnectionInfo());
                 var app = GetActiveApplication();
                 if (app == null) return Write(Fail<object>("未检测到活动的 EB " + Version + "。"));
+                if (graphicReadProgress != null) graphicReadProgress.Report("已连接，正在读取图形模板根目录", true);
                 if (operation == "GetAttributeFolderTree") return Write(GetAttributeFolderTree(app));
                 if (operation == "GetAttributeFolderIdentity") return Write(GetAttributeFolderIdentity(app));
                 if (operation == "CreateAttributes") return Write(CreateAttributes(app, Read<CreateAttributesRequest>()));
@@ -664,12 +672,18 @@ namespace EBAssistant.Adapter
             {
                 Identity = new GraphicTemplateIdentity { Version = Version, RootId = root.ID, RootName = root.Name }
             };
+            if (graphicReadProgress != null) graphicReadProgress.Report("开始完整读取：" + result.Identity.RootName, true);
             foreach (object raw in root.Children as IEnumerable)
             {
                 var child = raw as ObjectItem;
-                if (child == null || IsGraphicTemplateItem(child)) continue;
-                result.Nodes.Add(ReadGraphicTemplateDirectory(child, root.Name));
+                if (child == null || !string.IsNullOrWhiteSpace(ReadGraphicTemplateSync(child))) continue;
+                var categoryWatch = Stopwatch.StartNew();
+                var categoryName = child.Name;
+                if (graphicReadProgress != null) graphicReadProgress.Report("开始大类：" + categoryName, true);
+                result.Nodes.Add(ReadGraphicTemplateDirectory(child, result.Identity.RootName));
+                if (graphicReadProgress != null) graphicReadProgress.Report("完成大类：" + categoryName + "，耗时 " + categoryWatch.Elapsed.TotalSeconds.ToString("F1") + " 秒", true);
             }
+            if (graphicReadProgress != null) graphicReadProgress.Report("完整读取完成", true);
             return Ok(result, "图形模板目录读取成功。");
         }
 
@@ -685,21 +699,24 @@ namespace EBAssistant.Adapter
                 ? root
                 : app.Utils.GetSnglObjectByID(request.DirectoryId) as ObjectItem;
             if (directory == null) return Fail<GraphicTemplateDirectoryNode>("所选图形模板目录已不存在，请刷新后重试。");
-            if (IsGraphicTemplateItem(directory)) return Fail<GraphicTemplateDirectoryNode>("所选对象不是图形模板目录。");
+            if (!string.IsNullOrWhiteSpace(ReadGraphicTemplateSync(directory))) return Fail<GraphicTemplateDirectoryNode>("所选对象不是图形模板目录。");
 
             var path = BuildGraphicTemplateDirectoryPath(root, directory);
             var node = ReadGraphicTemplateDirectoryShallow(directory, ParentPath(path));
             if (string.IsNullOrWhiteSpace(path)) node.FullPath = root.Name + " / " + directory.Name;
+            if (graphicReadProgress != null) graphicReadProgress.Report("所选目录刷新完成：" + node.FullPath, true);
             return Ok(node, "图形模板目录读取成功。");
         }
 
         private static GraphicTemplateDirectoryNode ReadGraphicTemplateDirectory(ObjectItem item, string parentPath)
         {
-            var path = parentPath + " / " + item.Name;
+            var name = item.Name;
+            var path = parentPath + " / " + name;
+            if (graphicReadProgress != null) { graphicReadProgress.Directories++; graphicReadProgress.Report("读取目录：" + path, true); }
             var node = new GraphicTemplateDirectoryNode
             {
                 Id = item.ID,
-                Name = item.Name,
+                Name = name,
                 FullPath = path,
                 Kind = item.Kind.ToString(),
                 TypeName = Safe(delegate { return item.TypeName; }, "")
@@ -708,8 +725,12 @@ namespace EBAssistant.Adapter
             {
                 var child = raw as ObjectItem;
                 if (child == null) continue;
-                if (IsGraphicTemplateItem(child))
-                    node.Templates.Add(ReadGraphicTemplateItem(child, item, path));
+                var sync = ReadGraphicTemplateSync(child);
+                if (!string.IsNullOrWhiteSpace(sync))
+                {
+                    node.Templates.Add(ReadGraphicTemplateItem(child, node.Id, path, sync));
+                    if (graphicReadProgress != null) { graphicReadProgress.Templates++; graphicReadProgress.Report("读取模板：" + node.Templates[node.Templates.Count - 1].FullPath, false); }
+                }
                 else
                     node.Children.Add(ReadGraphicTemplateDirectory(child, path));
             }
@@ -718,11 +739,13 @@ namespace EBAssistant.Adapter
 
         private static GraphicTemplateDirectoryNode ReadGraphicTemplateDirectoryShallow(ObjectItem item, string parentPath)
         {
-            var path = string.IsNullOrWhiteSpace(parentPath) ? item.Name : parentPath + " / " + item.Name;
+            var name = item.Name;
+            var path = string.IsNullOrWhiteSpace(parentPath) ? name : parentPath + " / " + name;
+            if (graphicReadProgress != null) { graphicReadProgress.Directories++; graphicReadProgress.Report("浅层读取目录：" + path, true); }
             var node = new GraphicTemplateDirectoryNode
             {
                 Id = item.ID,
-                Name = item.Name,
+                Name = name,
                 FullPath = path,
                 Kind = item.Kind.ToString(),
                 TypeName = Safe(delegate { return item.TypeName; }, "")
@@ -731,16 +754,19 @@ namespace EBAssistant.Adapter
             {
                 var child = raw as ObjectItem;
                 if (child == null) continue;
-                if (IsGraphicTemplateItem(child))
+                var sync = ReadGraphicTemplateSync(child);
+                if (!string.IsNullOrWhiteSpace(sync))
                 {
-                    node.Templates.Add(ReadGraphicTemplateItem(child, item, path));
+                    node.Templates.Add(ReadGraphicTemplateItem(child, node.Id, path, sync));
+                    if (graphicReadProgress != null) { graphicReadProgress.Templates++; graphicReadProgress.Report("读取模板：" + node.Templates[node.Templates.Count - 1].FullPath, false); }
                     continue;
                 }
+                var childName = child.Name;
                 node.Children.Add(new GraphicTemplateDirectoryNode
                 {
                     Id = child.ID,
-                    Name = child.Name,
-                    FullPath = path + " / " + child.Name,
+                    Name = childName,
+                    FullPath = path + " / " + childName,
                     Kind = child.Kind.ToString(),
                     TypeName = Safe(delegate { return child.TypeName; }, "")
                 });
@@ -748,15 +774,20 @@ namespace EBAssistant.Adapter
             return node;
         }
 
-        private static GraphicTemplateItem ReadGraphicTemplateItem(ObjectItem item, ObjectItem parent, string parentPath)
+        private static string ReadGraphicTemplateSync(ObjectItem item)
         {
-            var sync = ReadAttributeValue(item, 45);
-            var parentId = parent == null ? "" : parent.ID;
+            var attribute = item.Attributes.Find((AucAttribute)45);
+            return attribute == null ? "" : Convert.ToString(attribute.Value);
+        }
+
+        private static GraphicTemplateItem ReadGraphicTemplateItem(ObjectItem item, string parentId, string parentPath, string sync)
+        {
+            var name = item.Name;
             return new GraphicTemplateItem
             {
                 Id = item.ID,
-                Name = item.Name,
-                FullPath = parentPath + " / " + item.Name,
+                Name = name,
+                FullPath = parentPath + " / " + name,
                 ParentDirectoryId = parentId,
                 Kind = item.Kind.ToString(),
                 TypeName = Safe(delegate { return item.TypeName; }, ""),
@@ -1905,6 +1936,22 @@ namespace EBAssistant.Adapter
                 Message = result.Status == "completed" ? "工作表创建完成。" : result.Status == "partial" ? "部分工作表创建完成。" : "工作表创建失败。",
                 Data = result
             };
+        }
+
+        private sealed class GraphicTemplateReadProgress
+        {
+            private readonly Stopwatch watch = Stopwatch.StartNew();
+            private long lastReport;
+            public int Directories;
+            public int Templates;
+
+            public void Report(string stage, bool force)
+            {
+                if (!force && watch.ElapsedMilliseconds - lastReport < 1000) return;
+                lastReport = watch.ElapsedMilliseconds;
+                Console.Error.WriteLine("[GraphicTemplateRead] 目录 " + Directories + "，模板 " + Templates + "，累计 " + watch.Elapsed.TotalSeconds.ToString("F1") + " 秒 | " + stage.Replace('\r', ' ').Replace('\n', ' '));
+                Console.Error.Flush();
+            }
         }
 
         private sealed class WorksheetColumnLabelRecord

@@ -68,7 +68,7 @@ public sealed class GraphicTemplatesForm : Form
             return;
         }
 
-        var shared = await GraphicTemplateSharedLoader.LoadAsync(_client);
+        var shared = await GraphicTemplateSharedLoader.LoadAsync(_client, CreateReadProgress());
         if (!shared.Success || shared.Identity is null || shared.Tree is null)
         {
             SetBusy(false, shared.Message);
@@ -99,7 +99,7 @@ public sealed class GraphicTemplatesForm : Form
     {
         if (_client is null) return;
         SetBusy(true, $"正在从 EB {_client.Connection.Version} 读取图形模板目录...");
-        var response = await _client.GetGraphicTemplateTreeAsync();
+        var response = await _client.GetGraphicTemplateTreeAsync(CreateReadProgress());
         if (!response.Success || response.Data is null)
         {
             SetBusy(false, response.Message);
@@ -132,7 +132,7 @@ public sealed class GraphicTemplatesForm : Form
     {
         if (_client is null || _cache is null) return;
         SetBusy(true, "正在刷新所选图形模板目录...");
-        var response = await _client.GetGraphicTemplateDirectoryAsync(directoryId);
+        var response = await _client.GetGraphicTemplateDirectoryAsync(directoryId, CreateReadProgress());
         if (!response.Success || response.Data is null)
         {
             SetBusy(false, response.Message);
@@ -145,6 +145,11 @@ public sealed class GraphicTemplatesForm : Form
         DisplayTree(_cache, response.Data.Id);
         SetBusy(false, $"已刷新：{response.Data.FullPath}");
     }
+
+    private IProgress<string> CreateReadProgress() => new Progress<string>(message =>
+    {
+        if (!IsDisposed && !_refresh.Enabled) _status.Text = message;
+    });
 
     private async Task MoveSelectedTemplatesAsync()
     {

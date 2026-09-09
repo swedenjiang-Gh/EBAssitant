@@ -112,14 +112,14 @@ public sealed class EbAdapterClient
     public Task<AdapterResponse<GraphicTemplateIdentity>> GetGraphicTemplateIdentityAsync() =>
         InvokeAsync<GraphicTemplateIdentity>(_adapterPath, "GetGraphicTemplateIdentity", null);
 
-    public Task<AdapterResponse<GraphicTemplateTreeResult>> GetGraphicTemplateTreeAsync() =>
-        InvokeAsync<GraphicTemplateTreeResult>(_adapterPath, "GetGraphicTemplateTree", null);
+    public Task<AdapterResponse<GraphicTemplateTreeResult>> GetGraphicTemplateTreeAsync(IProgress<string>? progress = null) =>
+        InvokeAsync<GraphicTemplateTreeResult>(_adapterPath, "GetGraphicTemplateTree", null, progress);
 
-    public Task<AdapterResponse<GraphicTemplateDirectoryNode>> GetGraphicTemplateDirectoryAsync(string directoryId) =>
+    public Task<AdapterResponse<GraphicTemplateDirectoryNode>> GetGraphicTemplateDirectoryAsync(string directoryId, IProgress<string>? progress = null) =>
         InvokeAsync<GraphicTemplateDirectoryNode>(
             _adapterPath,
             "GetGraphicTemplateDirectory",
-            new GraphicTemplateDirectoryRequest { DirectoryId = directoryId });
+            new GraphicTemplateDirectoryRequest { DirectoryId = directoryId }, progress);
 
     public Task<AdapterResponse<MoveGraphicTemplatesResult>> MoveGraphicTemplatesAsync(MoveGraphicTemplatesRequest request) =>
         InvokeAsync<MoveGraphicTemplatesResult>(_adapterPath, "MoveGraphicTemplates", request);
@@ -180,9 +180,11 @@ public sealed class EbAdapterClient
     public Task<AdapterResponse<CreateWorksheetsResult>> CreateWorksheetsAsync(CreateWorksheetsRequest request) =>
         InvokeAsync<CreateWorksheetsResult>(_adapterPath, "CreateWorksheets", request);
 
-    private static async Task<AdapterResponse<T>> InvokeAsync<T>(string path, string operation, object? request)
+    private static async Task<AdapterResponse<T>> InvokeAsync<T>(string path, string operation, object? request, IProgress<string>? progress = null)
     {
-        const int adapterTimeoutMilliseconds = 30000;
+        var adapterTimeoutMilliseconds = GraphicTemplateReadDiagnostics.GetTimeoutMilliseconds(operation);
+        var readLog = GraphicTemplateReadDiagnostics.IsReadOperation(operation)
+            ? new GraphicTemplateReadDiagnostics(operation, path) : null;
         var startInfo = new ProcessStartInfo
         {
             FileName = path,
@@ -203,7 +205,8 @@ public sealed class EbAdapterClient
         }
         catch (Exception ex)
         {
-            return new AdapterResponse<T> { Message = $"无法启动 EB 适配器：{path}{Environment.NewLine}{ex.GetType().Name}: {ex.Message}" };
+            readLog?.Append("适配器启动失败：" + ex.Message);
+            return new AdapterResponse<T> { Message = $"无法启动 EB 适配器：{path}{Environment.NewLine}{ex.GetType().Name}: {ex.Message}" + (readLog is null ? "" : Environment.NewLine + readLog.LogLocation) };
         }
 
         using (process)
@@ -220,37 +223,67 @@ public sealed class EbAdapterClient
         process.StandardInput.Close();
 
         var outputTask = process.StandardOutput.ReadToEndAsync();
-        var errorTask = process.StandardError.ReadToEndAsync();
+        var errorTask = readLog is null ? process.StandardError.ReadToEndAsync() : ReadErrorAsync(process.StandardError, readLog, progress);
         var waitTask = process.WaitForExitAsync();
         if (await Task.WhenAny(waitTask, Task.Delay(adapterTimeoutMilliseconds)) != waitTask)
         {
-            try { process.Kill(entireProcessTree: true); } catch { }
+            // 图形模板只读超时只停止本次适配器，不终止可能由 COM 关联的 EB 进程。
+            try { process.Kill(entireProcessTree: readLog is null); } catch { }
+            if (readLog is not null)
+            {
+                // 给已写入管道的最后进度一个有界的排空窗口。
+                await Task.WhenAny(Task.WhenAll(outputTask, errorTask, waitTask), Task.Delay(2000));
+                readLog.Append("操作超时；最后进度：" + readLog.LastProgress);
+                return new AdapterResponse<T> { Message = readLog.TimeoutMessage(operation) };
+            }
             return new AdapterResponse<T>
             {
-                Message = $"EB 适配器执行超时：{Path.GetFileName(path)} {operation} 超过 {adapterTimeoutMilliseconds / 1000} 秒未返回。请确认 EB 与 EBAssistant 使用同一用户和同一权限级别运行。"
+                Message = $"EB 适配器执行超时：{Path.GetFileName(path)} {operation} 超过 {adapterTimeoutMilliseconds / 1000} 秒未返回。该超时本身不能确定原因，请检查 EB 是否就绪及连接诊断日志。"
             };
         }
 
         await waitTask;
         var output = await outputTask;
         var error = await errorTask;
+        readLog?.Append($"适配器已退出：ExitCode={process.ExitCode}；错误输出：{TakeSnippet(error)}");
 
         if (string.IsNullOrWhiteSpace(output))
         {
             var exit = process.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            return new AdapterResponse<T> { Message = string.IsNullOrWhiteSpace(error) ? $"EB 适配器没有返回结果。ExitCode={exit}" : $"EB 适配器错误。ExitCode={exit}{Environment.NewLine}{error.Trim()}" };
+            var message = string.IsNullOrWhiteSpace(error) ? $"EB 适配器没有返回结果。ExitCode={exit}" : $"EB 适配器错误。ExitCode={exit}{Environment.NewLine}{error.Trim()}";
+            return new AdapterResponse<T> { Message = message + (readLog is null ? "" : Environment.NewLine + readLog.LogLocation) };
         }
 
         try
         {
-            return JsonSerializer.Deserialize<AdapterResponse<T>>(output, JsonOptions)
+            var response = JsonSerializer.Deserialize<AdapterResponse<T>>(output, JsonOptions)
                 ?? new AdapterResponse<T> { Message = "无法解析 EB 适配器结果。" };
+            if (readLog is not null)
+            {
+                readLog.Append($"结果：Success={response.Success}；{response.Message}");
+                response.Message += Environment.NewLine + readLog.LogLocation;
+            }
+            return response;
         }
         catch (JsonException ex)
         {
-            return new AdapterResponse<T> { Message = $"EB 适配器结果格式错误：{ex.Message}{Environment.NewLine}输出片段：{TakeSnippet(output)}{Environment.NewLine}错误输出：{TakeSnippet(error)}" };
+            readLog?.Append("响应解析失败：" + ex.Message);
+            return new AdapterResponse<T> { Message = $"EB 适配器结果格式错误：{ex.Message}{Environment.NewLine}输出片段：{TakeSnippet(output)}{Environment.NewLine}错误输出：{TakeSnippet(error)}" + (readLog is null ? "" : Environment.NewLine + readLog.LogLocation) };
         }
         }
+    }
+
+    private static async Task<string> ReadErrorAsync(StreamReader reader, GraphicTemplateReadDiagnostics? readLog, IProgress<string>? progress)
+    {
+        var errors = new System.Text.StringBuilder();
+        while (await reader.ReadLineAsync() is { } line)
+        {
+            if (readLog?.AcceptLine(line) == true)
+                progress?.Report(readLog.LastProgress);
+            else
+                errors.AppendLine(line);
+        }
+        return errors.ToString();
     }
 
     private static string TakeSnippet(string value)

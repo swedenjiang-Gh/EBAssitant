@@ -11,7 +11,7 @@ public sealed class GraphicTemplateSharedLoadResult
 
 public static class GraphicTemplateSharedLoader
 {
-    public static async Task<GraphicTemplateSharedLoadResult> LoadAsync(EbAdapterClient client)
+    public static async Task<GraphicTemplateSharedLoadResult> LoadAsync(EbAdapterClient client, IProgress<string>? progress = null)
     {
         var identityResponse = await client.GetGraphicTemplateIdentityAsync();
         if (!identityResponse.Success || identityResponse.Data is null)
@@ -32,7 +32,7 @@ public static class GraphicTemplateSharedLoader
             };
         }
 
-        var treeResponse = await client.GetGraphicTemplateTreeAsync();
+        var treeResponse = await client.GetGraphicTemplateTreeAsync(progress);
         if (!treeResponse.Success || treeResponse.Data is null)
         {
             return new GraphicTemplateSharedLoadResult

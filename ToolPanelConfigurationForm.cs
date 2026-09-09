@@ -94,7 +94,7 @@ public sealed class ToolPanelConfigurationForm : Form
         }
 
         _toolPanelIdentity = toolPanelIdentityResponse.Data;
-        var shared = await GraphicTemplateSharedLoader.LoadAsync(_client);
+        var shared = await GraphicTemplateSharedLoader.LoadAsync(_client, CreateGraphicReadProgress());
         if (!shared.Success || shared.Tree is null)
         {
             SetBusy(false, shared.Message);
@@ -192,7 +192,7 @@ public sealed class ToolPanelConfigurationForm : Form
     {
         if (_client is null || _graphicTree is null) return;
         SetBusy(true, "正在刷新所选图形模板目录...");
-        var response = await _client.GetGraphicTemplateDirectoryAsync(directoryId);
+        var response = await _client.GetGraphicTemplateDirectoryAsync(directoryId, CreateGraphicReadProgress());
         if (!response.Success || response.Data is null)
         {
             SetBusy(false, response.Message);
@@ -298,6 +298,11 @@ public sealed class ToolPanelConfigurationForm : Form
             _toolPanelDirectories.SelectedNode?.Tag is ToolPanelDirectoryNode target &&
             ToolPanelConfigurationSelection.IsToolPanelEntry(target);
     }
+
+    private IProgress<string> CreateGraphicReadProgress() => new Progress<string>(message =>
+    {
+        if (!IsDisposed && !_refresh.Enabled) _status.Text = message;
+    });
 
     private void SetBusy(bool busy, string message)
     {
