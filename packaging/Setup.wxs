@@ -1,0 +1,36 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+  <!-- Framework is a shared system component: never uninstall it with this bundle. -->
+  <Bundle Name="EBAssistant" Manufacturer="EBAssistant" Version="$(var.Version)"
+          UpgradeCode="7c725adc-f1e3-4bf0-87bf-123bdb5b4474">
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication Theme="hyperlinkLicense" LicenseUrl=""
+          ThemeFile="$(var.SourceDir)\SetupTheme.xml" LocalizationFile="$(var.SourceDir)\SetupTheme.wxl"
+          SuppressRepair="yes" />
+    </BootstrapperApplication>
+    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFilesFolder]EBAssistant" />
+    <Variable Name="NetFxRelease" Type="numeric" Value="0" />
+    <Variable Name="NetFxVersion" Type="string" Value="未检测到" />
+    <Variable Name="InstallNetFx462" Type="numeric" Value="0" />
+    <util:RegistrySearch Id="FindNetFxRelease" Variable="NetFxRelease" Root="HKLM"
+        Key="SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" Value="Release" Result="value" Bitness="always32" />
+    <util:RegistrySearch Id="FindNetFxVersion" Variable="NetFxVersion" Root="HKLM"
+        Key="SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full" Value="Version" Result="value" Bitness="always32" />
+    <Chain>
+      <ExePackage Id="NetFx462" SourceFile="$(var.PrerequisiteDir)\NDP462-KB3151800-x86-x64-AllOS-ENU.exe"
+          DisplayName="Microsoft .NET Framework 4.6.2" PerMachine="yes" Permanent="yes" Vital="yes"
+          DetectCondition="NetFxRelease &gt;= 394802"
+          InstallCondition="InstallNetFx462 AND NetFxRelease &lt; 394802"
+          InstallArguments="/norestart /log &quot;[WixBundleLog_NetFx462]&quot;">
+        <ExitCode Value="3010" Behavior="scheduleReboot" />
+        <ExitCode Value="1641" Behavior="forceReboot" />
+        <ExitCode Value="0" Behavior="success" />
+        <ExitCode Behavior="error" />
+      </ExePackage>
+      <MsiPackage Id="EBAssistantMsi" SourceFile="$(var.MsiPath)" Vital="yes">
+        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

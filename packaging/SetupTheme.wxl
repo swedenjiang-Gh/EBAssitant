@@ -1,0 +1,12 @@
+<WixLocalization Culture="zh-cn" Language="2052" xmlns="http://wixtoolset.org/schemas/v4/wxl">
+  <String Id="ConfirmCancelMessage" Value="确定取消安装吗？" />
+  <String Id="ExecuteUpgradeRelatedBundleMessage" Value="旧版本 EBAssistant" />
+  <String Id="FilesInUseTitle" Value="文件正在使用" />
+  <String Id="FilesInUseLabel" Value="以下程序正在使用需要更新的文件：" />
+  <String Id="FilesInUseNetfxCloseRadioButton" Value="关闭这些程序。" />
+  <String Id="FilesInUseCloseRadioButton" Value="关闭这些程序并尝试重新启动。" />
+  <String Id="FilesInUseDontCloseRadioButton" Value="保留程序，稍后重启电脑。" />
+  <String Id="FilesInUseRetryButton" Value="重试" />
+  <String Id="FilesInUseIgnoreButton" Value="忽略" />
+  <String Id="FilesInUseExitButton" Value="退出" />
+</WixLocalization>

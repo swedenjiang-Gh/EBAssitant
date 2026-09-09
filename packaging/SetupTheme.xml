@@ -1,0 +1,84 @@
+<Theme xmlns="http://wixtoolset.org/schemas/v4/thmutil">
+  <Font Id="0" Height="-14" Weight="400" Foreground="windowtext" Background="window">Microsoft YaHei UI</Font>
+  <Font Id="1" Height="-24" Weight="600" Foreground="windowtext">Microsoft YaHei UI</Font>
+  <Window Width="640" Height="450" HexStyle="100a0000" FontId="0" Caption="EBAssistant 安装">
+    <Label X="20" Y="18" Width="-20" Height="40" FontId="1" Visible="yes">EBAssistant [WixBundleVersion]</Label>
+    <Page Name="Loading">
+      <Label X="20" Y="85" Width="-20" Height="40">正在检测当前电脑的运行环境……</Label>
+    </Page>
+    <Page Name="Install">
+      <Label X="20" Y="75" Width="-20" Height="24">
+        <Text>当前 .NET Framework：未检测到 4.5 或更高版本</Text>
+        <Text Condition="NetFxRelease &gt;= 533320">当前 .NET Framework：4.8.1 或更高版本（[NetFxVersion]）</Text>
+        <Text Condition="NetFxRelease &gt;= 528040 AND NetFxRelease &lt; 533320">当前 .NET Framework：4.8（[NetFxVersion]）</Text>
+        <Text Condition="NetFxRelease &gt;= 461808 AND NetFxRelease &lt; 528040">当前 .NET Framework：4.7.2（[NetFxVersion]）</Text>
+        <Text Condition="NetFxRelease &gt;= 461308 AND NetFxRelease &lt; 461808">当前 .NET Framework：4.7.1（[NetFxVersion]）</Text>
+        <Text Condition="NetFxRelease &gt;= 460798 AND NetFxRelease &lt; 461308">当前 .NET Framework：4.7（[NetFxVersion]）</Text>
+        <Text Condition="NetFxRelease &gt;= 394802 AND NetFxRelease &lt; 460798">当前 .NET Framework：4.6.2（[NetFxVersion]）</Text>
+        <Text Condition="NetFxRelease &gt; 0 AND NetFxRelease &lt; 394802">当前 .NET Framework：[NetFxVersion]（版本不足）</Text>
+      </Label>
+      <Label X="20" Y="108" Width="-20" Height="42">
+        <Text>最低要求：4.6.2。未满足要求，请选择补装后继续。</Text>
+        <Text Condition="NetFxRelease &gt;= 394802">最低要求：4.6.2。当前已满足，可保留现有版本直接安装。</Text>
+      </Label>
+      <Checkbox Name="InstallNetFx462" X="20" Y="163" Width="-20" Height="25" TabStop="yes"
+          VisibleCondition="NetFxRelease &lt; 394802">同意运行微软 .NET Framework 4.6.2 离线安装程序</Checkbox>
+      <Label X="20" Y="210" Width="-20" Height="70" VisibleCondition="NetFxRelease &lt; 394802">补装 4.6.2 后再安装 EBAssistant。&#10;将打开微软安装窗口供你确认许可条款，可能需要管理员权限和重启。</Label>
+      <Button Name="OptionsButton" X="20" Y="-20" Width="110" Height="30" TabStop="yes">
+        <Text>安装位置</Text><ChangePageAction Page="Options" />
+      </Button>
+      <Button X="-150" Y="-20" Width="120" Height="30" TabStop="yes"
+          EnableCondition="NetFxRelease &gt;= 394802 OR InstallNetFx462">
+        <Text>下一步</Text><ChangePageAction Page="Confirm" />
+      </Button>
+      <Button X="-20" Y="-20" Width="110" Height="30" TabStop="yes"><Text>取消</Text><CloseWindowAction /></Button>
+    </Page>
+    <Page Name="Confirm">
+      <Label X="20" Y="85" Width="-20" Height="30">确认安装内容：</Label>
+      <Label X="20" Y="130" Width="-20" Height="80">
+        <Text>保留当前 .NET Framework，只安装 EBAssistant。</Text>
+        <Text Condition="InstallNetFx462 AND NetFxRelease &lt; 394802">先运行微软 .NET Framework 4.6.2 安装程序，再安装 EBAssistant。</Text>
+      </Label>
+      <Label X="20" Y="225" Width="-20" Height="80">安装位置：[InstallFolder]</Label>
+      <Button X="20" Y="-20" Width="110" Height="30" TabStop="yes"><Text>返回</Text><ChangePageAction Page="Install" /></Button>
+      <Button Name="InstallButton" X="-150" Y="-20" Width="120" Height="30" TabStop="yes">开始安装</Button>
+      <Button X="-20" Y="-20" Width="110" Height="30" TabStop="yes"><Text>取消</Text><CloseWindowAction /></Button>
+    </Page>
+    <Page Name="Options">
+      <Label X="20" Y="85" Width="-20" Height="30">安装位置：</Label>
+      <Editbox Name="InstallFolder" X="20" Y="125" Width="-140" Height="30" TabStop="yes" FileSystemAutoComplete="yes" />
+      <Button X="-20" Y="125" Width="110" Height="30" TabStop="yes"><Text>浏览</Text><BrowseDirectoryAction VariableName="InstallFolder" /></Button>
+      <Button X="-150" Y="-20" Width="120" Height="30" TabStop="yes"><Text>确定</Text><ChangePageAction Page="Install" /></Button>
+      <Button X="-20" Y="-20" Width="110" Height="30" TabStop="yes"><Text>返回</Text><ChangePageAction Page="Install" Cancel="yes" /></Button>
+    </Page>
+    <Page Name="Progress">
+      <Label X="20" Y="85" Width="-20" Height="30">正在安装，请稍候……</Label>
+      <Label Name="OverallProgressPackageText" X="20" Y="130" Width="-20" Height="30">准备安装</Label>
+      <Progressbar Name="OverallCalculatedProgressbar" X="20" Y="175" Width="-20" Height="20" />
+      <Button Name="ProgressCancelButton" X="-20" Y="-20" Width="110" Height="30" TabStop="yes">取消</Button>
+    </Page>
+    <Page Name="Modify">
+      <Label X="20" Y="85" Width="-20" Height="50">此版本已经安装。卸载 EBAssistant 不会卸载系统的 .NET Framework。</Label>
+      <Button Name="UninstallButton" X="-150" Y="-20" Width="120" Height="30" TabStop="yes">卸载</Button>
+      <Button X="-20" Y="-20" Width="110" Height="30" TabStop="yes"><Text>关闭</Text><CloseWindowAction /></Button>
+    </Page>
+    <Page Name="Success">
+      <Label X="20" Y="85" Width="-20" Height="50">操作已完成。</Label>
+      <Label X="20" Y="145" Width="-20" Height="60" VisibleCondition="WixStdBARestartRequired">需要重启电脑才能完成运行环境更新。请先保存其他程序中的工作。</Label>
+      <Button Name="SuccessRestartButton" X="-150" Y="-20" Width="120" Height="30" TabStop="yes" HideWhenDisabled="yes">立即重启</Button>
+      <Button X="-20" Y="-20" Width="110" Height="30" TabStop="yes"><Text>关闭</Text><CloseWindowAction /></Button>
+    </Page>
+    <Page Name="Failure">
+      <Label X="20" Y="85" Width="-20" Height="30">安装未完成。</Label>
+      <Hypertext Name="FailureLogFileLink" X="20" Y="130" Width="-20" Height="35" TabStop="yes">查看&lt;a href="#"&gt;安装日志&lt;/a&gt;</Hypertext>
+      <Hypertext Name="FailureMessageText" X="20" Y="180" Width="-20" Height="100" TabStop="yes" />
+      <Label X="20" Y="300" Width="-20" Height="50" VisibleCondition="WixStdBARestartRequired">运行环境更新需要重启，请保存工作后重启并重新运行安装程序。</Label>
+      <Button Name="FailureRestartButton" X="-150" Y="-20" Width="120" Height="30" TabStop="yes" HideWhenDisabled="yes">立即重启</Button>
+      <Button X="-20" Y="-20" Width="110" Height="30" TabStop="yes"><Text>关闭</Text><CloseWindowAction /></Button>
+    </Page>
+    <Page Name="Help">
+      <Label X="20" Y="85" Width="-20" Height="180">运行安装程序后，先检查 Framework 版本。&#10;低于 4.6.2 时需同意补装，满足要求则直接安装 EBAssistant。&#10;日志默认保存在当前用户的临时目录，可在失败页面打开。&#10;/layout 可解包，/log 可指定日志文件。</Label>
+      <Button X="-20" Y="-20" Width="110" Height="30" TabStop="yes"><Text>关闭</Text><CloseWindowAction /></Button>
+    </Page>
+  </Window>
+</Theme>

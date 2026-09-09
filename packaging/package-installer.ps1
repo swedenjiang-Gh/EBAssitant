@@ -117,6 +117,9 @@ function New-WixSource([string]$SourceRoot, [string]$DestinationPath) {
   <Package Name="EBAssistant" Manufacturer="EBAssistant" Version="$Version" UpgradeCode="7f8e7b4b-6d75-4f4c-9c96-7f43e4c2099c" Scope="perMachine" Codepage="65001">
     <MajorUpgrade DowngradeErrorMessage="A newer version of EBAssistant is already installed." />
     <MediaTemplate EmbedCab="yes" />
+    <PropertyRef Id="WIX_IS_NETFRAMEWORK_462_OR_LATER_INSTALLED" />
+    <Launch Condition="Installed OR WIX_IS_NETFRAMEWORK_462_OR_LATER_INSTALLED"
+            Message="EBAssistant requires .NET Framework 4.6.2 or later. Run the Setup.exe installer to check and install prerequisites." />
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
 
     <StandardDirectory Id="ProgramFilesFolder">
@@ -175,12 +178,15 @@ dotnet tool restore
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 dotnet wix extension add WixToolset.UI.wixext/4.0.6
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+dotnet wix extension add WixToolset.Netfx.wixext/4.0.6
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "Publishing self-contained WinForms app..."
 dotnet publish (Join-Path $root "EBAssistant.csproj") `
     -c $Configuration `
     -r win-x86 `
     --self-contained true `
+    -p:Version=$Version `
     -p:PublishSingleFile=false `
     -p:PublishReadyToRun=false `
     -o $appStage
@@ -205,7 +211,9 @@ Write-Host "Generating WiX source..."
 New-WixSource $appStage $wxs
 
 Write-Host "Building MSI installer..."
-dotnet wix build $wxs -ext WixToolset.UI.wixext -o $output
+dotnet wix build $wxs -ext WixToolset.UI.wixext -ext WixToolset.Netfx.wixext -o $output
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "Installer created: $output"
+& (Join-Path $PSScriptRoot 'package-setup.ps1') -MsiPath $output -Version $Version
+exit $LASTEXITCODE
